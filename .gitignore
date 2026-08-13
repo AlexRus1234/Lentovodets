@@ -1,0 +1,35 @@
+# Legacy (старый nil-backup) — только локальный референс, в git не попадает.
+# См. docs/LEGACY_REFERENCE.md.
+/legacy/
+
+# Бинари сборки
+/lentovodec
+/lentovodec.exe
+/bin/
+/dist/
+
+# SQLite-каталог и логи (runtime artefacts)
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Локальные конфиги (пользователь может переопределять)
+/lentovodec.toml
+
+# Web-бандл, генерируемый Vite (_embed'ится в бинарь на этапе сборки)
+/internal/iface/web/assets/
+
+# Покрытие тестами
+*.out
+*.prof
+/coverage/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Файлы ленточных "тренажёров" из filetape-тестов
+*.tape

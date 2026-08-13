@@ -1,0 +1,407 @@
+# Спецификация
+
+Функциональные требования к `lentovodec`. Этот документ отвечает на вопрос
+**«что делает система»**; вопрос «как устроена» — в [ARCHITECTURE](ARCHITECTURE.md),
+«как байты лежат на ленте» — в [FORMAT](FORMAT.md).
+
+## 1. Глоссарий
+
+| Термин         | Значение                                                       |
+| -------------- | -------------------------------------------------------------- |
+| Tape           | Физическая кассета LTO. Идентифицируется UUID и именем.        |
+| Session        | Один запуск бекапа, записанный на ленту. На одной ленте несколько, нумеруются с 1. |
+| Job            | Конфигурация бекапа: что, откуда, в каком режиме.              |
+| Catalog        | SQLite-БД с метаданными всех кассет, сессий и файлов.          |
+| TapeLabel      | JSON-ярлык в первом блоке ленты.                               |
+| FileMeta       | Метаданные одного файла в конкретной сессии.                   |
+| Tombstone      | Запись о **удалённом** файле (`State = Deleted`).              |
+| EOD            | End Of Data — позиция после последней сессии на ленте.         |
+
+## 2. Доменные сущности
+
+### 2.1. `Job`
+
+| Поле          | Тип           | Описание                                          |
+| ------------- | ------------- | ------------------------------------------------- |
+| `Name`        | string        | Уникальное имя задания; ключ в конфиге            |
+| `Description` | string        | Человекочитаемое описание                         |
+| `Mode`        | `JobMode`     | `"append"` или `"mirror"` (см. 2.2)               |
+| `Paths`       | []string      | Список корней для бекапа (файлы или каталоги)     |
+| `Exclude`     | []string      | Glob-шаблоны для исключения (см. 2.3)             |
+
+Хранятся в `lentovodec.toml`, секция `[[jobs]]`.
+
+### 2.2. `JobMode`
+
+| Значение   | Сема                                                            |
+| ---------- | --------------------------------------------------------------- |
+| `append`   | Бекапятся новые и изменённые файлы. Удаления не отслеживаются.  |
+| `mirror`   | Бекапятся новые и изменённые файлы **плюс** tombstone'ы на удалённые. Восстановление может реконструировать зеркало каталога на момент сессии. |
+
+> В legacy `mirror` был объявлен, но `Scanner` игнорировал режим. В новом —
+> это **первый класс**, поведение строгое и протестированное.
+
+### 2.3. `Exclude` — glob-шаблоны
+
+- Поддержка шаблонов `filepath.Match` (одиночный сегмент) **и**
+  `doublestar`-стиля `/**/` для рекурсивных матчей.
+- Примеры: `*.tmp`, `.git/**`, `node_modules`, `**/.DS_Store`.
+- Матчинг — по полному пути (как в `filepath.Clean`), регистрозависимый.
+- В legacy была только подстрока `strings.Contains` — это баг.
+
+### 2.4. `FileMeta`
+
+| Поле       | Тип        | Описание                                                        |
+| ---------- | ---------- | --------------------------------------------------------------- |
+| `Path`     | string     | Абсолютный или корневой-относительный, всегда `filepath.Clean`  |
+| `Size`     | int64      | Размер в байтах (0 для каталогов)                               |
+| `ModTime`  | int64      | Unix-наносекунды (или миллисекунды — зафиксировать в impl.)     |
+| `IsDir`    | bool       | true для каталогов                                              |
+| `Hash`     | string     | xxhash64 в hex (16 символов); пустой для каталогов и tombstone'ов |
+| `State`    | `FileState`| См. 2.5                                                         |
+
+### 2.5. `FileState`
+
+| Значение    | Символ в БД | Когда возникает                                            |
+| ----------- | ----------- | ---------------------------------------------------------- |
+| `Added`     | `'A'`       | Файл есть на ФС, в прошлой сессии (по пути) не встречался   |
+| `Modified`  | `'M'`       | Файл есть, изменился Size или ModTime                       |
+| `Deleted`   | `'D'`       | Файл был в прошлой сессии, теперь отсутствует (только mirror) |
+
+Правила перехода вычисляются `Scanner.Scan` на основе:
+- текущего снимка ФС (через `port.Filesystem`)
+- прошлого снимка (через `port.Catalog.GetFilesBySession(lastSessionID)` или
+  эквивалентный запрос)
+
+### 2.6. `Session`
+
+| Поле         | Тип           | Описание                                              |
+| ------------ | ------------- | ----------------------------------------------------- |
+| `ID`         | int64         | PK в таблице `sessions`                               |
+| `TapeUUID`   | string        | FK на `tapes.uuid`                                    |
+| `Num`        | int32         | Порядковый номер **на этой ленте**, начиная с 1       |
+| `Type`       | `SessionType` | `"FULL"` или `"INC"`                                  |
+| `Timestamp`  | int64         | Unix-секунды старта сессии                            |
+| `JobRunID`   | string        | UUID запуска (для группировки частей одного бекапа)   |
+
+`Num` вычисляется как `MAX(session_num) + 1` для текущего `tapeUUID`. Первая
+сессия на ленте обязана быть `FULL`.
+
+### 2.7. `TapeLabel`
+
+См. [FORMAT §5](FORMAT.md#5-tapelabel-json). Канонические поля: `Magic`,
+`FormatVersion`, `Name`, `UUID`, `FormattedAt`.
+
+## 3. Каталог (SQLite)
+
+### 3.1. Схема
+
+```sql
+CREATE TABLE tapes (
+    uuid        TEXT PRIMARY KEY,
+    name        TEXT UNIQUE NOT NULL,
+    formatted_at INTEGER NOT NULL
+);
+
+CREATE TABLE sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tape_uuid   TEXT NOT NULL,
+    session_num INTEGER NOT NULL,
+    type        TEXT NOT NULL CHECK (type IN ('FULL', 'INC')),
+    timestamp   INTEGER NOT NULL,
+    job_run_id  TEXT NOT NULL,
+    FOREIGN KEY (tape_uuid) REFERENCES tapes(uuid),
+    UNIQUE (tape_uuid, session_num)
+);
+
+CREATE TABLE files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    path        TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    mod_time    INTEGER NOT NULL,
+    is_dir      BOOLEAN NOT NULL,
+    hash        TEXT NOT NULL,
+    state       TEXT NOT NULL CHECK (state IN ('A', 'M', 'D')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_files_path    ON files(path);
+CREATE INDEX idx_files_session ON files(session_id);
+CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
+```
+
+Отличия от legacy (см. [LEGACY_REFERENCE](LEGACY_REFERENCE.md#что-сломано)):
+
+- Добавлены `CHECK`-ограничения (`type`, `state`).
+- Добавлен `UNIQUE (tape_uuid, session_num)` — два одинаковых номера сессии
+  на одной ленте невозможно.
+- `ON DELETE CASCADE` на `files.session_id` — удаление сессии автоматически
+  чистит файлы, явный DELETE не нужен (хотя Catalog может делать его явно в
+  транзакции для понятности).
+- `PRAGMA foreign_keys = ON;` и `PRAGMA journal_mode = WAL;` — обязательно.
+
+### 3.2. Контракт `port.Catalog`
+
+| Метод                                    | Назначение                                            |
+| ---------------------------------------- | ----------------------------------------------------- |
+| `RegisterTape(ctx, uuid, name, ts)`      | Вставка или UPSERT кассеты (при форматировании)       |
+| `GetTapeByUUID(ctx, uuid)`               | Получить кассету по UUID (для сверки с ленты)         |
+| `CreateSession(ctx, sess)` → `id`        | Создать запись о сессии                               |
+| `LastSessionNum(ctx, tapeUUID)` → `int32`| `MAX(session_num)`                                    |
+| `SaveFiles(ctx, sessionID, files)`       | Пакетная вставка файлов в одной транзакции            |
+| `GetLatestFileStates(ctx, paths)`        | Карта path→FileMeta по последней сессии каждого пути  |
+| `ListTapes(ctx)`                         | Все кассеты                                           |
+| `ListSessions(ctx, filter)`              | Сессии с фильтром по tape                             |
+| `GetFilesBySession(ctx, sessionID)`      | Все файлы сессии                                      |
+| `GetAllFileCopies(ctx, path)`            | Все сессии, где файл встречается (для smart restore)  |
+| `SearchFiles(ctx, pattern)`              | Глобальный поиск                                      |
+| `DeleteSession(ctx, sessionID)`          | Каскадное удаление                                    |
+| `PruneSessions(ctx, before)` → `int64`   | Удаление старых сессий                                |
+| `Close()`                                | Закрыть соединение                                    |
+
+`GetLatestFileStates` — пакетный аналог legacy `GetLatestFileState`; один
+запрос для всего набора путей сессии (важно для производительности `mirror`).
+
+## 4. Сценарии использования
+
+### 4.1. `FormatTape(name, force)`
+
+1. Прочитать текущий лейбл. Если есть и `!force` → `ErrAlreadyFormatted`.
+2. Сгенерировать `UUID` (RFC-4122 v4).
+3. Перемотать в начало, записать `TapeLabel`, два `MTWEOF`.
+4. `Catalog.RegisterTape(uuid, name, now)`.
+
+### 4.2. `Backup(jobName, opts)`
+
+См. диаграмму в [ARCHITECTURE §4.1](ARCHITECTURE.md#41-backupusecasebackupctx-jobname-opts).
+
+Опции:
+- `Full bool` — полный бекап (не инкремент); по умолчанию `false`.
+- `DryRun bool` — только сканирование, без записи на ленту.
+
+Возвращаемые значения:
+- `Session{ID, Num, Type, ...}` — созданная сессия.
+- `Stats{Scanned, Added, Modified, Deleted, Bytes}` — статистика.
+
+**Семантика mirror:** при `job.Mode == "mirror"` сканер сравнивает текущий
+снимок ФС со снимком последней сессии (любого типа) в каталоге для этого
+`Job.Name`. Файлы, отсутствующие на ФС, но присутствующие в каталоге,
+получают `State = Deleted` и кладутся в `files` + в индекс на ленте как
+tombstone (без tar-вхождения). Это позволяет восстановить зеркало каталога
+**на момент любой сессии**.
+
+### 4.3. `RestoreUseCase`
+
+Три метода.
+
+#### `RestoreFull(ctx, destDir)`
+
+Аварийное восстановление всей ленты. Перемотка в начало, последовательное
+чтение всех сессий; для каждой:
+- читать индекс, парсить список `FileMeta`;
+- читать tar-поток, для каждого файла проверять xxhash;
+- писать в `destDir/path` (или в исходное место, если `destDir == ""`).
+
+На повреждённой сессии: логировать, переходить к следующей через
+`MTFSF` до следующего filemark'а.
+
+#### `RestoreSelective(ctx, sessionID, paths, destDir)`
+
+Восстановление выбранных файлов из конкретной сессии:
+1. Извлечь `session_num` и `tape_uuid` из каталога.
+2. Перемотать ленту в позицию этой сессии: `MTFSF(2*session_num - 1)`.
+3. Читать индекс, затем tar, выбирая только нужные пути.
+4. Проверять xxhash.
+
+#### `RestoreSmart(ctx, paths, destDir)`
+
+Восстановление «по пути» без знания сессии:
+1. Для каждого пути: `Catalog.GetAllFileCopies(path)` — список
+   `(sessionID, tapeUUID, sessionNum, timestamp)` упорядоченный по
+   убыванию времени.
+2. Запросить текущий лейбл ленты; отфильтровать копии, которые на этой
+   ленте.
+3. Для каждой оставшейся копии: перемотать `MTFSF(2*sessionNum - 1)`,
+   попытаться распаковать нужные пути.
+4. Если хеш не сошёлся — следующая копия.
+5. Если ни одна копия не прочиталась → `ErrNoHealthyCopy`.
+
+> В legacy этот сценарий был самым хрупким из-за отсутствия `MTWEOF` между
+> сессиями. В новом формате он детерминирован (см. [FORMAT §9](FORMAT.md#9-правила-перемотки)).
+
+### 4.4. `CatalogUseCase`
+
+- `ListTapes`, `ListSessions(tapeUUID?)`, `GetFiles(sessionID)`.
+- `Search(pattern)` — глобальный поиск файлов.
+- `DeleteSession(sessionID)` — удаление записи из каталога (данные на ленте
+  остаются, но путь к ним теряется).
+- `Prune(before)` — удаление всех сессий старше `before`.
+
+### 4.5. Управление лентой
+
+- `TapeInfo()` — текущий лейбл + (если поддерживается приводом) позиция.
+- `Eject()` — `MTOFFL`.
+- `ReadTest()` — диагностическое чтение всей ленты с проверкой хешей без
+  записи на ФС (для проверки носителя).
+
+## 5. CLI
+
+Глобальные флаги (наследуются всеми подкомандами):
+
+```
+--config PATH        путь к конфигу (по умолчанию ./lentovodec.toml)
+--device PATH        устройство ленты (по умолчанию /dev/nst0)
+--db PATH            путь к SQLite-каталогу (по умолчанию ./lentovodec.db)
+--log PATH           файл лога (по умолчанию ./lentovodec.log)
+--server URL         адрес демона для клиентских команд (по умолчанию http://127.0.0.1:8080)
+-v, --verbose        отладочный лог
+```
+
+| Команда                                    | Режим       | Описание                                            |
+| ------------------------------------------ | ----------- | --------------------------------------------------- |
+| `lentovodec backup <job> [--full]`         | local       | Запустить задание                                   |
+| `lentovodec restore [--paths p1,p2]`       | local       | `--paths` → smart; иначе full. `--dest`, `--original` |
+| `lentovodec tape format <name> [--force]`  | local       | Форматировать ленту                                 |
+| `lentovodec tape readtest`                 | local       | Диагностическое чтение                              |
+| `lentovodec tape info`                     | daemon      | Прочитать ярлык                                     |
+| `lentovodec tape eject`                    | daemon      | Извлечь ленту                                       |
+| `lentovodec jobs list`                     | local       | Показать задания из TOML                            |
+| `lentovodec jobs add <name>`               | local       | Добавить задание (флаги: `--paths`, `--mode`, `--desc`, `--exclude`) |
+| `lentovodec jobs remove <name>`            | local       | Удалить задание                                     |
+| `lentovodec catalog tapes`                 | daemon      | Список кассет                                       |
+| `lentovodec catalog sessions [--tape U]`   | daemon      | Список сессий                                       |
+| `lentovodec catalog files --session N`     | daemon      | Файлы сессии                                        |
+| `lentovodec catalog search <pattern>`      | daemon      | Поиск файлов                                        |
+| `lentovodec catalog rm --session N`        | daemon      | Удалить сессию из каталога                          |
+| `lentovodec catalog prune --days N`        | daemon      | Удалить сессии старше N дней                        |
+| `lentovodec daemon [--port 8080]`          | server      | Запустить демона                                    |
+
+`local` — прямой доступ к ленте, демон не нужен. `daemon` — команда идёт в
+HTTP API. Это явное отличие от legacy, где границы были запутаны.
+
+## 6. REST API
+
+Базовый путь `/api`. Формат — JSON. Ошибки — `{"error": "...", "code": "..."}`.
+
+### 6.1. Состояние и конфиг
+
+| Метод | Путь                  | Описание                                  |
+| ----- | --------------------- | ----------------------------------------- |
+| GET   | `/status`             | healthcheck, версия, есть ли лента        |
+| GET   | `/config`             | текущий конфиг (TOML как текст)           |
+| GET   | `/settings`           | текущие настройки устройства              |
+| POST  | `/settings`           | обновить `device` путь                    |
+
+### 6.2. Лента
+
+| Метод | Путь                  | Описание                                  |
+| ----- | --------------------- | ----------------------------------------- |
+| GET   | `/tape/info`          | прочитать `TapeLabel`                     |
+| POST  | `/tape/eject`         | извлечь                                   |
+| POST  | `/tape/format?name=&force=` | форматировать                       |
+
+### 6.3. Задания
+
+| Метод | Путь            | Описание                                  |
+| ----- | --------------- | ----------------------------------------- |
+| GET   | `/jobs`         | список из TOML                            |
+| POST  | `/jobs`         | добавить в TOML                           |
+| DELETE| `/jobs/{name}`  | удалить из TOML                           |
+
+### 6.4. Асинхронные задачи
+
+| Метод | Путь                          | Описание                                  |
+| ----- | ----------------------------- | ----------------------------------------- |
+| POST  | `/backup/start?job=&full=`    | запустить бекап, вернуть `taskID`         |
+| POST  | `/restore/start?paths=&dest=&original=` | запустить restore, вернуть `taskID` |
+| GET   | `/tasks/active`               | список активных задач                     |
+| GET   | `/tasks/{id}/progress`        | прогресс (текущий файл, %, скорость, лог) |
+
+Прогресс-объект:
+
+```json
+{
+  "id": "task-abcdef12",
+  "state": "running|success|error",
+  "phase": "scan|write|finalize",
+  "current_file": "/path/to/file",
+  "processed_bytes": 1234567,
+  "total_bytes": 9876543,
+  "percent": 12.5,
+  "speed_mbps": 145.2,
+  "logs": ["...последние 50 строк..."],
+  "error": ""
+}
+```
+
+### 6.5. Каталог
+
+| Метод | Путь                                  | Описание                            |
+| ----- | ------------------------------------- | ----------------------------------- |
+| GET   | `/catalog/tapes`                      |                                     |
+| GET   | `/catalog/sessions?tape=`             |                                     |
+| GET   | `/catalog/sessions/{id}/files`        |                                     |
+| GET   | `/catalog/search?q=`                  |                                     |
+| DELETE| `/catalog/sessions/{id}`              | удалить сессию                      |
+| POST  | `/catalog/prune?days=`                | почистить старые                    |
+
+### 6.6. Статические ассеты
+
+`GET /` и всё, что не матчит `/api/*`, отдаёт встроенный `embed.FS` с
+собранным Vue-бандлом. Контент-тайпы — по расширению.
+
+## 7. Web UI
+
+Четыре экрана, повторяют REST API:
+
+| Экран     | Возможности                                                         |
+| --------- | ------------------------------------------------------------------- |
+| **Tape**  | Информация о текущей ленте, форма форматирования (с `force`), eject, редактор пути устройства. |
+| **Jobs**  | Карточки заданий с описанием и режимом; кнопка «Запустить» (full/inc). Форма создания/редактирования. Прогресс-панель: полоса %, скорость, текущий файл, бегущий лог. |
+| **Catalog** | Таблица сессий с фильтром по ленте; удаление.                      |
+| **Files** | Браузер файлов выбранной сессии: хлебные крошки, чекбоксы, кнопка «Восстановить выбранное» с диалогом «безопасная папка vs оригинальные пути». |
+
+i18n: русский и английский, переключатель в `localStorage`.
+
+## 8. Конфигурация
+
+`lentovodec.toml`:
+
+```toml
+db    = "lentovodec.db"
+device = "/dev/nst0"
+log   = "lentovodec.log"
+server = "http://127.0.0.1:8080"
+log_level = "info"           # debug | info | warn | error
+
+[[jobs]]
+Name = "media"
+Description = "Бекап сериалов"
+Mode = "append"              # append | mirror
+Paths = ["/tank/data/media"]
+Exclude = ["**/.DS_Store", "**/*.partial"]
+
+[[jobs]]
+Name = "system"
+Description = "Системные файлы"
+Mode = "mirror"
+Paths = ["/etc", "/home"]
+Exclude = ["/home/*/.cache/**"]
+```
+
+Слои применения: defaults → TOML → env (`LENTOVODEC_DEVICE`,
+`LENTOVODEC_DB`, ...) → флаги.
+
+## 9. Нефункциональные требования
+
+| Качество           | Подход                                                            |
+| ------------------ | ----------------------------------------------------------------- |
+| Логирование        | `log/slog`, структурированно, уровень из конфига                  |
+| Отмена операций    | `context.Context` во всех use case; демон глушит задачу по SIGINT |
+| Прогресс           | `port.ProgressReporter`, throttle 2 Гц                            |
+| Производительность | Блочный I/O 256 KiB; buffering 4 MiB при копировании файлов       |
+| Целостность        | xxhash64 каждого файла, проверяется при любом restore             |
+| Безопасность       | Демон пишет warning, если запущен не от `root` (нет доступа к `/dev/nst0`) |
+| Graceful shutdown  | Демон ловит SIGINT/SIGTERM, ждёт завершения активной задачи до 30с |
+| UID/GID при restore | Опционально, через флаг `--preserve-ownership`; по умолчанию выключено (не требует root) |
