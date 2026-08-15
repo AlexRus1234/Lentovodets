@@ -379,7 +379,44 @@ round-trip (записали — прочитали — сравнили); golde
 
 ---
 
-## Этап 6 — Use cases
+## Этап 6 — Use cases — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-15).
+> `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...`, `go test -race ./...` зелёные; покрытие:
+> scan **97.0%**, backup **99.2%**, format **95.7%**, restore **95.2%**,
+> catalog **100.0%** (цель ≥95%). Зафиксированные решения (в рамках
+> свободы impl.):
+> - добавлены порты `port.TapeCodec` (ярлык+сессии) и `port.Hasher`
+>   (xxhash64): usecase не может импортировать adapter/** (depguard);
+>   реализации — фасад `tapeformat.Codec` и `adapter/xxhash.Hasher`;
+> - testutil-двойники Этапа 6: `MemCatalog` (полный `port.Catalog`,
+>   семантика и сортировки как у sqlite), `FixedClock`,
+>   `FixedRand` (циклический список) / `FailingRand`, `NoopLogger`,
+>   `HashFunc`, `FakeCodec` (очередь сессий для чтения подряд,
+>   инъекции сбоев по номеру вызова);
+> - Scanner: Added/Modified по size+mtime; xxhash считается только для
+>   попавших в сессию файлов; Exclude-матч каталога-предка отсекает
+>   всё поддерево; tombstone'ы (mirror) — только для путей под корнями
+>   задания, сортировка по алфавиту;
+> - Backup: снимок для сравнения — файлы последней сессии ленты;
+>   позиционирование MTFSF(2K+1) и замыкающая EOD-пара после сессии
+>   (инвариант FORMAT §4: 2K+3 меток); FULL-рестарт (первая сессия или
+>   `--full`) чистит старые сессии из каталога и сбрасывает нумерацию;
+>   при сбое записи созданная сессия удаляется из каталога
+>   (компенсация); ENOSPC-подобные ошибки маппятся в `TapeFullError`
+>   (с Written из трекера прогресса); DryRun — только скан;
+> - Restore: Full читает сессии подряд до `EmptyIndexError`,
+>   повреждённые (маркеры ошибок tapeformat) пропускает с MTFSF;
+>   Selective — MTFSF(2K−1), выбор по путям и поддеревьям; Smart —
+>   копии из `GetAllFileCopies` от новых к старым с fallback'ом и
+>   `NoHealthyCopyError`; tombstone'ы прочитанных сессий удаляются из
+>   dest (реконструкция mirror, FORMAT §8);
+> - `domain.EmptyIndexError` — конец сессий при чтении ленты подряд
+>   (декодер возвращает его вместо строковой ошибки);
+> - CatalogUseCase: ListTapes/ListSessions/GetFiles/Search/DeleteSession/
+>   Prune + TapeInfo/Eject/ReadTest (диагностическое чтение без записи
+>   на ФС); tape/codec могут быть nil (daemon без устройства).
 
 **Файлы:**
 - `internal/usecase/scan/scanner.go` — `Scanner.Scan(ctx, job, lastSnapshot)
