@@ -203,7 +203,39 @@ linters-settings:
 
 ---
 
-## Этап 3 — adapter/tapeformat (чистый формат)
+## Этап 3 — adapter/tapeformat (чистый формат) — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-15).
+> `make lint`, `go vet ./...`, `go build ./...`, `go build -tags tape ./...`,
+> `go test -race ./...` зелёные; покрытие `internal/adapter/tapeformat` —
+> **100.0%**. Зафиксированные решения (в рамках свободы impl.):
+> - сигнатуры расширены против кратких в плане: `WriteSession(ctx, tape,
+>   idx SessionIndex, fs, prog)` / `ReadSession(ctx, tape, dest, prog)` —
+>   индексу нужны метаданные сессии (session_num/type/job_run_id/
+>   timestamp/job_name, FORMAT §6), а `context` — первый аргумент
+>   long-running операций (ARCHITECTURE §6.2);
+> - wire-тип `SessionIndex` живёт в tapeformat;
+> - `ReadSession` с `dest == nil` — режим проверки (readtest): содержимое
+>   читается, хеши сверяются, на ФС не пишется;
+> - после `ReadSession` лента стоит за filemark'ом tar-сегмента — сессии
+>   можно читать подряд (остаток сегмента дочитывается до метки);
+> - tar — GNU (FORMAT §7); ModTime в tar-заголовке — секунды
+>   (наносекунды — только в индексе; GNU не кодирует sub-second);
+> - энкодер сверяет xxhash при записи: файл, изменившийся между сканом и
+>   записью, — ошибка, а не тихая порча индекса;
+> - прогресс — только `Update` (фаза `write`); `Done`/`Fail` публикует
+>   вызывающий use case; `prog == nil` допустим;
+> - `EncodeLabel` возвращает `([]byte, error)` (контроль «JSON влезает в
+>   один блок»); ошибки декодирования ярлыка — типизированные:
+>   `BlankTapeError`/`ForeignFormatError`/`NewerFormatError`;
+> - созданы необходимые testutil-двойники (docs/TESTING.md §3):
+>   `FakeTape`, `MapFS` (Reader+Writer+Walker), `NoProgress`; остальные
+>   (`MemCatalog`, `FixedClock`, …) — в Этапе 6;
+> - golden-файлы `golden/{label,index,session}.bin`,
+>   `session_marks.txt`; регенерация при осознанном изменении формата:
+>   `go test ./internal/adapter/tapeformat -update`;
+> - добавлена зависимость `github.com/cespare/xxhash/v2` v2.1.2 (из
+>   закреплённого списка README).
 
 **Файлы:**
 - `internal/adapter/tapeformat/encoder.go` —
