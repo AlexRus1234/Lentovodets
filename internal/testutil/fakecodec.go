@@ -71,6 +71,12 @@ func (c *FakeCodec) WriteSession(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if prog != nil {
+		prog.Update(port.ProgressUpdate{
+			Phase:          port.PhaseWrite,
+			ProcessedBytes: int64(len(files)),
+		})
+	}
 	c.WroteHeaders = append(c.WroteHeaders, header)
 	c.WroteFiles = append(c.WroteFiles, append([]domain.FileMeta(nil), files...))
 	c.WroteSessions++
