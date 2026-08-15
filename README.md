@@ -15,10 +15,13 @@
 `Этап 2 — Port layer`, `Этап 3 — adapter/tapeformat` (чистый формат
 ленты: ярлык, JSON-индекс, tar-поток — с golden-тестами и 100% покрытия),
 `Этап 4 — adapter/osfs, sqlite, tomlconfig` (реальная ФС, каталог
-SQLite, конфиг TOML с записью заданий; покрытие ≥93% на пакет)
-и `Этап 5 — adapter/filetape, linuxtape` (лента-как-файл с персистентностью
-и ioctls драйвера st; покрытие filetape 96.3%).
-Следующий — `Этап 6 — Use cases`. См. [ROADMAP](docs/ROADMAP.md).
+SQLite, конфиг TOML с записью заданий; покрытие ≥93% на пакет),
+`Этап 5 — adapter/filetape, linuxtape` (лента-как-файл с персистентностью
+и ioctls драйвера st; покрытие filetape 96.3%) и `Этап 6 — Use cases`
+(Scanner, Backup, Restore Full/Selective/Smart, FormatTape, Catalog;
+покрытие 95.2–100% на пакет; новые порты `TapeCodec`/`Hasher`).
+Следующий — `Этап 7 — iface/cli, iface/web, cmd/lentovodec`.
+См. [ROADMAP](docs/ROADMAP.md).
 
 ## Документация (канон)
 
