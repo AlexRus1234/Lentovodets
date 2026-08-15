@@ -2,6 +2,9 @@
 # См. docs/LEGACY_REFERENCE.md.
 /legacy/
 
+# Инструкции для agentic-инструментов (AGENTS.md и пр.) — локальные, в git не попадают.
+AGENTS.md
+
 # Бинари сборки
 /lentovodec
 /lentovodec.exe

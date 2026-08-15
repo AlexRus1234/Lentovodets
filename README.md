@@ -11,10 +11,10 @@
 
 ## Текущий этап
 
-`Этап 0 — Подготовка инфраструктуры` завершён: создан скелет модуля
-`lentovodec`, конфиги (`.golangci.yaml`, `Makefile`, `.gitignore`,
-`.editorconfig`), пустые пакеты всех слоёв с `doc.go`. См. [ROADMAP](docs/ROADMAP.md)
-— следующий `Этап 1 — Domain layer`.
+Завершены `Этап 0 — Подготовка инфраструктуры`, `Этап 1 — Domain layer`,
+`Этап 2 — Port layer` и `Этап 3 — adapter/tapeformat` (чистый формат
+ленты: ярлык, JSON-индекс, tar-поток — с golden-тестами и 100% покрытия).
+Следующий — `Этап 4 — adapter/osfs, sqlite, tomlconfig`. См. [ROADMAP](docs/ROADMAP.md).
 
 ## Документация (канон)
 
