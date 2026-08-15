@@ -164,3 +164,16 @@ func (e *AlreadyFormattedError) Is(target error) bool {
 	_, ok := target.(*AlreadyFormattedError)
 	return ok
 }
+
+// EmptyIndexError — пустой индекс сессии при чтении ленты подряд:
+// достигнут конец записанных сессий (EOD) либо повреждена граница.
+type EmptyIndexError struct{}
+
+// Error реализует интерфейс error.
+func (e *EmptyIndexError) Error() string { return "индекс сессии пуст" }
+
+// Is поддерживает errors.Is(err, &EmptyIndexError{}).
+func (e *EmptyIndexError) Is(target error) bool {
+	_, ok := target.(*EmptyIndexError)
+	return ok
+}

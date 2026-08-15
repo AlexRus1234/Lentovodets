@@ -61,7 +61,7 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 	}
 	trimmed := trimZeros(buf)
 	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("tapeformat: индекс сессии пуст")
+		return nil, fmt.Errorf("tapeformat: %w", &domain.EmptyIndexError{})
 	}
 	var idx SessionIndex
 	if err := json.Unmarshal(trimmed, &idx); err != nil {

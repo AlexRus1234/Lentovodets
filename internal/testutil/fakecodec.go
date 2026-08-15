@@ -11,17 +11,24 @@ import (
 	"lentovodec/internal/port"
 )
 
-// FakeCodec запоминает вызовы; поля Err* инъектируют сбои, ReadFiles —
-// результат ReadSession.
+// FakeCodec запоминает вызовы; поля Err* инъектируют сбои.
+// ErrReadOnce срабатывает один раз и сбрасывается (повреждение
+// конкретной копии). ReadSession раздаёт сессии из очереди Queue
+// по порядку; когда очередь пуста — *domain.EmptyIndexError (конец
+// данных, как у реального декодера). ReadFiles используется, если
+// очередь пуста и задан непустой слайс.
 type FakeCodec struct {
-	ErrEncode     error
-	ErrDecode     error
-	ErrWrite      error
-	ErrRead       error
-	ReadFiles     []domain.FileMeta
-	WroteHeaders  []port.SessionHeader
-	WroteFiles    [][]domain.FileMeta
-	WroteSessions int
+	ErrEncode    error
+	ErrDecode    error
+	ErrWrite     error
+	ErrRead      error
+	ErrReadOnce  error // срабатывает на ErrReadOn-м вызове и сбрасывается
+	ErrReadOn    int   // номер вызова ReadSession (с 1) для ErrReadOnce
+	Queue        [][]domain.FileMeta
+	ReadFiles    []domain.FileMeta
+	WroteHeaders []port.SessionHeader
+	WroteFiles   [][]domain.FileMeta
+	ReadCalls    int
 }
 
 // EncodeLabel кодирует ярлык в JSON (без паддинга до BlockSize).
@@ -79,24 +86,38 @@ func (c *FakeCodec) WriteSession(
 	}
 	c.WroteHeaders = append(c.WroteHeaders, header)
 	c.WroteFiles = append(c.WroteFiles, append([]domain.FileMeta(nil), files...))
-	c.WroteSessions++
 	return nil
 }
 
-// ReadSession возвращает ReadFiles.
+// ReadSession выдаёт очередную сессию из Queue; при пустой очереди —
+// ReadFiles, если заданы, иначе *domain.EmptyIndexError.
 func (c *FakeCodec) ReadSession(
 	ctx context.Context,
 	tape port.Tape,
 	dest port.FileWriter,
 	prog port.ProgressReporter,
 ) ([]domain.FileMeta, error) {
+	c.ReadCalls++
 	if c.ErrRead != nil {
 		return nil, c.ErrRead
+	}
+	if c.ErrReadOnce != nil && c.ReadCalls == c.ErrReadOn {
+		err := c.ErrReadOnce
+		c.ErrReadOnce = nil
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return append([]domain.FileMeta(nil), c.ReadFiles...), nil
+	if len(c.Queue) > 0 {
+		files := c.Queue[0]
+		c.Queue = c.Queue[1:]
+		return append([]domain.FileMeta(nil), files...), nil
+	}
+	if len(c.ReadFiles) > 0 {
+		return append([]domain.FileMeta(nil), c.ReadFiles...), nil
+	}
+	return nil, &domain.EmptyIndexError{}
 }
 
 // trimZeroBytes отрезает замыкающие нули.
