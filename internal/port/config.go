@@ -20,7 +20,7 @@ type ConfigSource interface {
 	Log() string
 
 	// Server — адрес демона для клиентских команд
-	// (по умолчанию http://127.0.0.1:8080).
+	// (по умолчанию http://127.0.0.1:29201).
 	Server() string
 
 	// LogLevel — уровень логирования: debug|info|warn|error.

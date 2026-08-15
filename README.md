@@ -12,9 +12,11 @@
 ## Текущий этап
 
 Завершены `Этап 0 — Подготовка инфраструктуры`, `Этап 1 — Domain layer`,
-`Этап 2 — Port layer` и `Этап 3 — adapter/tapeformat` (чистый формат
-ленты: ярлык, JSON-индекс, tar-поток — с golden-тестами и 100% покрытия).
-Следующий — `Этап 4 — adapter/osfs, sqlite, tomlconfig`. См. [ROADMAP](docs/ROADMAP.md).
+`Этап 2 — Port layer`, `Этап 3 — adapter/tapeformat` (чистый формат
+ленты: ярлык, JSON-индекс, tar-поток — с golden-тестами и 100% покрытия)
+и `Этап 4 — adapter/osfs, sqlite, tomlconfig` (реальная ФС, каталог
+SQLite, конфиг TOML с записью заданий; покрытие ≥93% на пакет).
+Следующий — `Этап 5 — adapter/filetape, linuxtape`. См. [ROADMAP](docs/ROADMAP.md).
 
 ## Документация (канон)
 

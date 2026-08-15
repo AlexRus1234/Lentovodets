@@ -261,7 +261,40 @@ round-trip (записали — прочитали — сравнили); golde
 
 ---
 
-## Этап 4 — adapter/osfs, sqlite, tomlconfig
+## Этап 4 — adapter/osfs, sqlite, tomlconfig — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-15).
+> `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...`, `go test -race ./...` зелёные; покрытие:
+> osfs **93.9%**, sqlite **93.7%**, tomlconfig **95.7%** (цель ≥90%).
+> Зафиксированные решения (в рамках свободы impl.):
+> - добавлены зависимости `modernc.org/sqlite` v1.56.0 и
+>   `spf13/viper` v1.21.0 (обе — из закреплённого списка README);
+> - `osfs.FS` — единый тип `port.Filesystem` (файлы walker/reader/
+>   writer + конструктор в `fs.go`); Walk отдаёт пути как `filepath`
+>   (разделители ОС), нормализация — забота `domain.NormalizePath`;
+> - sqlite держит **одно постоянное соединение** (`MaxOpenConns=1`):
+>   `PRAGMA foreign_keys` действует на уровне соединения, а каталог —
+>   инструмент одного пользователя (SPEC §9.1); плюс
+>   `journal_mode=WAL` и `busy_timeout=5000`;
+> - `GetTapeByUUID` при отсутствии возвращает новый
+>   `domain.TapeNotFoundError` (по аналогии с SessionNotFoundError,
+>   чтобы usecase'ы не зависели от `sql.ErrNoRows`); domain-покрытие
+>   осталось 100%;
+> - `GetLatestFileStates` бьёт список путей на пакеты по 500 (лимит
+>   параметров SQLite); LIKE-поиск экранирует `%`/`_`/`\`;
+> - тесты sqlite гоняют каталог через `port.Catalog`; ошибки скана
+>   провоцируются вставкой «плохих» типов колонок вторым сырым
+>   соединением;
+> - tomlconfig держит **два** viper: слоёный `read` (defaults → TOML →
+>   env `LENTOVODEC_* → флаги) для геттеров и `file` (только TOML) для
+>   записи — значения env/флагов и секреты не протекают в файл при
+>   AddJob/RemoveJob;
+> - флаги CLI передаются map'ом `flagOverrides` (без прямой зависимости
+>   от pflag — её свяжет iface/cli на Этапе 7);
+> - viper пишет TOML заново: ключи lowercase, одинарные кавычки,
+>   комментарии не сохраняются — чтение регистронезависимо, round-trip
+>   полный (компромисс viper-подхода, заложенный в плане).
 
 **Файлы:**
 - `internal/adapter/osfs/walker.go`, `reader.go`, `writer.go` — реализации

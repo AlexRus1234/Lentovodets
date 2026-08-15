@@ -1,0 +1,423 @@
+package tomlconfig_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"lentovodec/internal/adapter/tomlconfig"
+	"lentovodec/internal/domain"
+	"lentovodec/internal/port"
+)
+
+// validTOML — пример из SPECIFICATION §8; первый job с ключами
+// в верхнем регистре, второй — в нижнем (чтение регистронезависимо).
+const validTOML = `
+db    = "/var/lib/lentovodec/catalog.db"
+device = "/dev/nst1"
+log   = "/var/log/lentovodec.log"
+server = "http://192.168.1.10:29201"
+log_level = "debug"
+web_password_hash = "$2a$10$secret"
+
+[[jobs]]
+Name = "media"
+Description = "Бекап сериалов"
+Mode = "append"
+Paths = ["/tank/data/media"]
+Exclude = ["**/.DS_Store", "**/*.partial"]
+
+[[jobs]]
+name = "system"
+description = "Системные файлы"
+mode = "mirror"
+paths = ["/etc", "/home"]
+exclude = ["/home/*/.cache/**"]
+`
+
+// newConfig пишет toml во временный файл (если непуст) и открывает Config.
+func newConfig(t *testing.T, toml string) (*tomlconfig.Config, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "lentovodec.toml")
+	if toml != "" {
+		if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
+			t.Fatalf("запись TOML: %v", err)
+		}
+	}
+	cfg, err := tomlconfig.New(path, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return cfg, path
+}
+
+// reopen перечитывает конфиг с диска.
+func reopen(t *testing.T, path string) *tomlconfig.Config {
+	t.Helper()
+	cfg, err := tomlconfig.New(path, nil)
+	if err != nil {
+		t.Fatalf("New(reopen): %v", err)
+	}
+	return cfg
+}
+
+func mediaJob() domain.Job {
+	return domain.Job{
+		Name:        "media",
+		Description: "Бекап сериалов",
+		Mode:        domain.ModeAppend,
+		Paths:       []string{"/tank/data/media"},
+		Exclude:     []string{"**/.DS_Store"},
+	}
+}
+
+// jobsEqual сравнивает задания целиком; nil и пустой слайс равны
+// (viper при записи нормализует отсутствующий список в []).
+func jobsEqual(a, b domain.Job) bool {
+	return a.Name == b.Name && a.Description == b.Description && a.Mode == b.Mode &&
+		stringsEqual(a.Paths, b.Paths) && stringsEqual(a.Exclude, b.Exclude)
+}
+
+// stringsEqual — поэлементное сравнение, nil == [].
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestConfig_ImplementsPorts(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	var source port.ConfigSource = cfg
+	var editor port.ConfigEditor = cfg
+	if source.Device() != cfg.Device() {
+		t.Fatal("port.ConfigSource и конкретный тип расходятся")
+	}
+	if err := editor.RemoveJob("definitely-missing-job"); err == nil {
+		t.Fatal("RemoveJob отсутствующего = nil, want ошибка")
+	}
+}
+
+func TestNew_MissingFile_Defaults(t *testing.T) {
+	cfg, _ := newConfig(t, "")
+
+	if cfg.Device() != "/dev/nst0" {
+		t.Errorf("Device = %q, want /dev/nst0", cfg.Device())
+	}
+	if cfg.DB() != "lentovodec.db" {
+		t.Errorf("DB = %q, want lentovodec.db", cfg.DB())
+	}
+	if cfg.Log() != "lentovodec.log" {
+		t.Errorf("Log = %q, want lentovodec.log", cfg.Log())
+	}
+	if cfg.Server() != "http://127.0.0.1:29201" {
+		t.Errorf("Server = %q, want http://127.0.0.1:29201", cfg.Server())
+	}
+	if cfg.LogLevel() != "info" {
+		t.Errorf("LogLevel = %q, want info", cfg.LogLevel())
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("Jobs len = %d, want 0", len(jobs))
+	}
+}
+
+func TestNew_ReadsTOML_CaseInsensitive(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+
+	if cfg.Device() != "/dev/nst1" {
+		t.Errorf("Device = %q, want /dev/nst1", cfg.Device())
+	}
+	if cfg.DB() != "/var/lib/lentovodec/catalog.db" {
+		t.Errorf("DB = %q", cfg.DB())
+	}
+	if cfg.LogLevel() != "debug" {
+		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel())
+	}
+	if cfg.Server() != "http://192.168.1.10:29201" {
+		t.Errorf("Server = %q", cfg.Server())
+	}
+
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("Jobs len = %d, want 2", len(jobs))
+	}
+	// Первый — с ключами в верхнем регистре (как в примере SPEC §8).
+	want := mediaJob()
+	want.Exclude = []string{"**/.DS_Store", "**/*.partial"}
+	if !jobsEqual(jobs[0], want) {
+		t.Errorf("jobs[0] = %+v, want %+v", jobs[0], want)
+	}
+	// Второй — в нижнем; viper регистронезависим.
+	if jobs[1].Name != "system" || jobs[1].Mode != domain.ModeMirror {
+		t.Errorf("jobs[1] = %+v, want system/mirror", jobs[1])
+	}
+	if len(jobs[1].Paths) != 2 || jobs[1].Paths[0] != "/etc" {
+		t.Errorf("jobs[1].Paths = %v", jobs[1].Paths)
+	}
+}
+
+func TestNew_MalformedTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lentovodec.toml")
+	if err := os.WriteFile(path, []byte("device = без-кавычек-и-не-число"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tomlconfig.New(path, nil); err == nil {
+		t.Fatal("New на битом TOML = nil, want ошибка разбора")
+	}
+}
+
+func TestLayers_EnvOverridesFile(t *testing.T) {
+	t.Setenv("LENTOVODEC_DEVICE", "/dev/nst2")
+	t.Setenv("LENTOVODEC_LOG_LEVEL", "warn")
+	cfg, _ := newConfig(t, validTOML)
+
+	if cfg.Device() != "/dev/nst2" {
+		t.Errorf("Device = %q, want /dev/nst2 (env бьёт файл)", cfg.Device())
+	}
+	if cfg.LogLevel() != "warn" {
+		t.Errorf("LogLevel = %q, want warn", cfg.LogLevel())
+	}
+	if cfg.DB() != "/var/lib/lentovodec/catalog.db" {
+		t.Errorf("DB = %q, want из файла", cfg.DB())
+	}
+}
+
+func TestLayers_FlagsOverrideEnv(t *testing.T) {
+	t.Setenv("LENTOVODEC_DEVICE", "/dev/nst2")
+	path := filepath.Join(t.TempDir(), "lentovodec.toml")
+	if err := os.WriteFile(path, []byte(validTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := tomlconfig.New(path, map[string]string{"device": "/dev/nst9"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if cfg.Device() != "/dev/nst9" {
+		t.Errorf("Device = %q, want /dev/nst9 (флаг бьёт env)", cfg.Device())
+	}
+}
+
+func TestLayers_EmptyFlagIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lentovodec.toml")
+	if err := os.WriteFile(path, []byte(validTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := tomlconfig.New(path, map[string]string{"device": "", "db": ""})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if cfg.Device() != "/dev/nst1" {
+		t.Errorf("Device = %q, want /dev/nst1 из файла (пустой флаг игнорируется)", cfg.Device())
+	}
+}
+
+func TestJobs_TypeMismatch(t *testing.T) {
+	cfg, _ := newConfig(t, "jobs = 42\n")
+	if _, err := cfg.Jobs(); err == nil {
+		t.Fatal("Jobs на битой секции = nil, want ошибка разбора")
+	}
+}
+
+func TestAddJob_CreatesNewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lentovodec.toml")
+	cfg, err := tomlconfig.New(path, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := cfg.AddJob(mediaJob()); err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 1 || !jobsEqual(jobs[0], mediaJob()) {
+		t.Fatalf("jobs = %+v, want round-trip %+v", jobs, mediaJob())
+	}
+	if reopened.DB() != "lentovodec.db" {
+		t.Errorf("DB = %q, want default (в новом файле только jobs)", reopened.DB())
+	}
+}
+
+func TestAddJob_AppendsAndPreservesOtherKeys(t *testing.T) {
+	cfg, path := newConfig(t, validTOML)
+	extra := domain.Job{
+		Name:  "photos",
+		Mode:  domain.ModeMirror,
+		Paths: []string{"/photos"},
+	}
+	if err := cfg.AddJob(extra); err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "web_password_hash") || !strings.Contains(text, "$2a$10$secret") {
+		t.Errorf("секрет потерян при записи:\n%s", text)
+	}
+	if !strings.Contains(text, "/var/lib/lentovodec/catalog.db") {
+		t.Errorf("db потерян при записи:\n%s", text)
+	}
+
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 3 {
+		t.Fatalf("jobs len = %d, want 3", len(jobs))
+	}
+	if !jobsEqual(jobs[2], extra) {
+		t.Errorf("jobs[2] = %+v, want %+v", jobs[2], extra)
+	}
+	if reopened.Device() != "/dev/nst1" {
+		t.Errorf("Device после записи = %q, want /dev/nst1", reopened.Device())
+	}
+}
+
+func TestAddJob_VisibleWithoutReopen(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	if err := cfg.AddJob(domain.Job{Name: "photos", Mode: domain.ModeAppend, Paths: []string{"/photos"}}); err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 3 {
+		t.Fatalf("jobs len = %d, want 3 (обновилось in-memory без перечитывания файла)", len(jobs))
+	}
+	if jobs[2].Name != "photos" {
+		t.Errorf("jobs[2].Name = %q, want photos", jobs[2].Name)
+	}
+}
+
+func TestAddJob_DuplicateRejected(t *testing.T) {
+	cfg, path := newConfig(t, validTOML)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddJob(mediaJob()); err == nil {
+		t.Fatal("дубликат имени принят, want ошибка")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("файл изменился при отклонённом AddJob")
+	}
+}
+
+func TestAddJob_InvalidJobRejected(t *testing.T) {
+	cfg, path := newConfig(t, validTOML)
+	bad := mediaJob()
+	bad.Mode = "синхронизация"
+	if err := cfg.AddJob(bad); err == nil {
+		t.Fatal("невалидное задание принято, want ошибка Validate")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Errorf("jobs len = %d, want 2 (невалидное не добавлено)", len(jobs))
+	}
+}
+
+func TestRemoveJob(t *testing.T) {
+	cfg, path := newConfig(t, validTOML)
+	if err := cfg.RemoveJob("media"); err != nil {
+		t.Fatalf("RemoveJob: %v", err)
+	}
+
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Name != "system" {
+		t.Fatalf("jobs = %+v, want только system", jobs)
+	}
+}
+
+func TestRemoveJob_LastLeavesEmptyList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lentovodec.toml")
+	cfg, err := tomlconfig.New(path, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := cfg.AddJob(mediaJob()); err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	if err := cfg.RemoveJob("media"); err != nil {
+		t.Fatalf("RemoveJob: %v", err)
+	}
+
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("jobs len = %d, want 0", len(jobs))
+	}
+}
+
+func TestRemoveJob_Missing(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	if err := cfg.RemoveJob("нет-такого"); err == nil {
+		t.Fatal("RemoveJob отсутствующего = nil, want ошибка")
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Errorf("jobs len = %d, want 2", len(jobs))
+	}
+}
+
+func TestAddJob_WriteFailure(t *testing.T) {
+	// Родительский каталог не существует: чтение проходит (файла нет),
+	// запись — нет.
+	path := filepath.Join(t.TempDir(), "нет-каталога", "lentovodec.toml")
+	cfg, err := tomlconfig.New(path, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := cfg.AddJob(mediaJob()); err == nil {
+		t.Fatal("AddJob в недоступный путь = nil, want ошибка записи")
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("после сбоя записи jobs len = %d, want 0 (память консистентна диску)", len(jobs))
+	}
+}

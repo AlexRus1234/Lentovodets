@@ -98,6 +98,22 @@ func (e *NewerFormatError) Is(target error) bool {
 	return ok
 }
 
+// TapeNotFoundError — кассеты с таким UUID нет в каталоге.
+type TapeNotFoundError struct {
+	UUID string
+}
+
+// Error реализует интерфейс error.
+func (e *TapeNotFoundError) Error() string {
+	return fmt.Sprintf("кассета %s не найдена в каталоге", e.UUID)
+}
+
+// Is поддерживает errors.Is(err, &TapeNotFoundError{}).
+func (e *TapeNotFoundError) Is(target error) bool {
+	_, ok := target.(*TapeNotFoundError)
+	return ok
+}
+
 // SessionNotFoundError — сессии с таким ID нет в каталоге.
 type SessionNotFoundError struct {
 	SessionID int64

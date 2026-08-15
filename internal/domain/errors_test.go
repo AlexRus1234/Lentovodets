@@ -55,6 +55,12 @@ func TestTypedErrors(t *testing.T) {
 			&domain.NewerFormatError{},
 		},
 		{
+			"кассета не найдена",
+			&domain.TapeNotFoundError{UUID: "u-7"},
+			"кассета u-7 не найдена",
+			&domain.TapeNotFoundError{},
+		},
+		{
 			"сессия не найдена",
 			&domain.SessionNotFoundError{SessionID: 42},
 			"сессия 42 не найдена",
