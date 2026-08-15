@@ -125,7 +125,26 @@ linters-settings:
 
 ---
 
-## Этап 2 — Port layer
+## Этап 2 — Port layer — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-15).
+> `make lint`, `go vet ./...`, `go build ./...`, `go build -tags tape ./...`
+> зелёные. Зафиксированные решения (в рамках свободы impl.):
+> - `Tape.EndOfData` (MTEOM) — имя из плана; синоним `LocateEOD` из
+>   ARCHITECTURE §4.1 не заводился;
+> - `ReadBlock` возвращает `io.EOF` при достижении filemark'а/EOD —
+>   контракт, на который опирается декодер Этапа 3;
+> - добавлена композиция `port.Filesystem` (Walker+FileReader+FileWriter)
+>   для передачи одной зависимостью в use case;
+> - вспомогательные типы каталога: `port.TapeRecord` (проекция таблицы
+>   `tapes`; `domain.TapeLabel` не подошёл из-за `FormattedAt string`
+>   RFC-3339 против `INTEGER` в БД) и `port.FileCopy` (общий результат
+>   `GetAllFileCopies` и `SearchFiles`);
+> - `ListSessions(ctx, tapeUUID)` — фильтр строкой, `""` = все кассеты;
+> - `SearchFiles` — поиск по подстроке в пути;
+> - добавлен `port.ConfigEditor` (AddJob/RemoveJob): нужен iface/web и
+>   CLI `jobs add/remove` (Этапы 4, 7), а iface не может импортировать
+>   адаптеры напрямую.
 
 **Файлы** (каждый — набор интерфейсов, без реализаций):
 - `internal/port/tape.go`:
@@ -298,6 +317,10 @@ round-trip (записали — прочитали — сравнили); golde
   [SPECIFICATION §5](SPECIFICATION.md#5-cli). Одна команда — один файл.
   Команды `daemon`-режима используют `client.HTTPClient`.
 - `internal/iface/cli/wire.go` — сборка use case и адаптеров в main.
+- Probe доступа к устройству на старте local-команд и демона
+  (rootless-модель, [SPECIFICATION §9.1](SPECIFICATION.md#91-rootless-модель)):
+  при EACCES/ENOENT — понятная ошибка с подсказкой (`usermod -aG tape`),
+  без проверки uid.
 - `internal/iface/web/router.go` — chi-роутер со всеми эндпоинтами из
   [SPECIFICATION §6](SPECIFICATION.md#6-rest-api).
 - `internal/iface/web/handler_*.go` — обработчики по группам (tape, jobs,
@@ -380,7 +403,9 @@ cd web && npm run build
   - `make web-build`.
   - `make build`.
   - загрузка бинарника как артефакта.
-- `README.md` финальный (с_installing/usage/contributing).
+- `README.md` финальный (installing/usage/contributing + rootless-развёртывание:
+  пользователь `lentovodec`, группа `tape`, udev, systemd-юнит с харднингом —
+  SPECIFICATION §9.1).
 - Возможно `docs/CHANGELOG.md` — пустой каркас.
 
 **Готовность:** CI зелёный на main.
