@@ -355,8 +355,13 @@ round-trip (записали — прочитали — сравнили); golde
   без проверки uid.
 - `internal/iface/web/router.go` — chi-роутер со всеми эндпоинтами из
   [SPECIFICATION §6](SPECIFICATION.md#6-rest-api).
-- `internal/iface/web/handler_*.go` — обработчики по группам (tape, jobs,
-  catalog, tasks).
+- `internal/iface/web/auth.go` — аутентификация по SPEC §6.0/§9.2:
+  bcrypt-проверка логина, in-memory сессии (crypto/rand, TTL), middleware
+  `Authorization: Bearer` / `X-API-Key` (subtle-сравнение), rate-limit
+  на `/auth/login` (5/30с на IP), аудит-лог; отказ старта при не-loopback
+  bind без `web_password_hash`.
+- `internal/iface/web/handler_*.go` — обработчики по группам (auth, tape,
+  jobs, catalog, tasks).
 - `internal/iface/web/taskregistry.go` — in-memory `map[TaskID]*Task` с
   мьютексом; фоновые goroutine для backup/restore.
 - `internal/iface/web/embed.go` — `//go:embed assets/*` (бандл из Этапа 8).
@@ -369,6 +374,9 @@ round-trip (записали — прочитали — сравнили); golde
 - cli: `execute(args) -> (stdout, err)` на нескольких сценариях.
 - web: `httptest.NewServer` + запросы к каждому эндпоинту; use cases под
   фейками.
+- auth: логин (верный/неверный пароль, rate-limit → 429, сброс счётчика),
+  401 без заголовка, `X-API-Key`, TTL-сессии, отказ старта при LAN-bind
+  без пароля.
 - taskregistry: гонка (`-race`) на фоне нескольких задач.
 
 **Готовность:** `go test -cover ./internal/iface/...` ≥ 70%; `go build
@@ -382,7 +390,8 @@ round-trip (записали — прочитали — сравнили); golde
 - `web/package.json`, `web/vite.config.ts` (build →
   `../internal/iface/web/assets`), `web/tsconfig.json`.
 - `web/src/main.ts`, `web/src/App.vue`.
-- `web/src/components/Tape.vue`, `Jobs.vue`, `Catalog.vue`, `Files.vue`.
+- `web/src/components/Login.vue` (экран логина, токен в `localStorage`),
+  `Tape.vue`, `Jobs.vue`, `Catalog.vue`, `Files.vue`.
 - `web/src/i18n.ts` (ru/en).
 - `web/src/api.ts` — обёртка над fetch.
 - `web/index.html`.
@@ -395,7 +404,7 @@ cd web && npm run build
 ```
 
 В прод-режиме embed подхватывает это; в dev-режиме — `npm run dev` с
-прокси на `:8080`.
+прокси на `:29201`.
 
 **Тесты:** smoke — открыть демо-страницу руками; автотестов пока нет.
 
