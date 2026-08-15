@@ -12,7 +12,12 @@
 
 ---
 
-## Этап 0 — Подготовка инфраструктуры
+## Этап 0 — Подготовка инфраструктуры — ЗАВЕРШЁН
+
+> **Статус: завершён** (коммит `cca5729`, 2026-08-15).
+> `make lint`, `go build ./...`, `go build -tags tape ./...`, `go test ./...`
+> зелёные. Отступление от плана: `legacy/nil-backup/` (~1.5 ГБ) оставлен
+> только как локальный референс и в git не коммитится (см. `.gitignore`).
 
 **Файлы:**
 - Перенос `nil-backup/` → `legacy/nil-backup/`.
@@ -80,7 +85,23 @@ linters-settings:
 
 ---
 
-## Этап 1 — Domain layer
+## Этап 1 — Domain layer — ЗАВЕРШЁН
+
+> **Статус: завершён** (коммит `8120357`, 2026-08-15).
+> `make lint`, `go build ./...`, `go build -tags tape ./...`,
+> `go test -race ./...` зелёные; покрытие `internal/domain` — **100.0%**.
+> Зафиксированные решения (в рамках свободы impl.):
+> - `FileMeta.ModTime` — Unix-**наносекунды** (SPEC §2.4 просил зафиксировать);
+> - ошибки — структуры с полями-деталями и методами `Is`/`Error`,
+>   sentinel-переменных нет (запрет package-level var, ARCHITECTURE §6.2);
+>   сравнение: `errors.As(err, &domain.TapeFullError{})` или
+>   `errors.Is(err, &domain.TapeFullError{})`;
+> - семантика `MatchExclude`: шаблон без `/` матчит **базовое имя**
+>   (примеры SPEC `*.tmp`, `node_modules` работают «вглубь»); используется
+>   `path.Match`, а не `filepath.Match` — у последнего на windows `*`
+>   пересекает `/`, что делало бы фильтры платформозависимыми;
+> - добавлена зависимость `bmatcuk/doublestar/v4` v4.10.0 (из
+>   закреплённого списка README).
 
 **Файлы:**
 - `internal/domain/job.go` — `Job`, `JobMode`, валидация (`Mode` ∈
