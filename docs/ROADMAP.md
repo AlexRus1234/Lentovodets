@@ -319,7 +319,44 @@ round-trip (записали — прочитали — сравнили); golde
 
 ---
 
-## Этап 5 — adapter/filetape, linuxtape
+## Этап 5 — adapter/filetape, linuxtape — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-15).
+> `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...` (win), кросс-сборка `GOOS=linux` с тегом
+> `tape` (amd64/arm64), `go test -race ./...` зелёные; покрытие
+> `internal/adapter/filetape` — **96.3%**. Зафиксированные решения
+> (в рамках свободы impl.):
+> - формат файла-ленты: 8-байтовый magic `FTAPEV1\0` + фреймы
+>   `тип(1) | len(LE uint32) | payload` (0x01 — блок, 0x02 — filemark);
+>   позиция — байтовое смещение; запись в середину усекает хвост, как у
+>   реальной ленты. Навигация — линейным сканом фреймов (O(n), для
+>   dev/CI достаточно); открытая заново лента стоит в BOT;
+> - `filetape.Open` отвергает чужой файл типизированной ошибкой
+>   `InvalidTapeFileError` (`errors.As`/`Is`), без sentinel-var;
+> - эквивалентность с `testutil.FakeTape` закреплена тестом: один и тот
+>   же сценарий (запись, EOD-дозапись, MTBSFM-перезапись хвоста, полный
+>   проход) даёт одинаковые последовательности событий;
+> - семантика `BackwardFilemarks` из EOD: позиция уже «за последней
+>   меткой», поэтому MTBSFM(1) — no-op, MTBSFM(2) — начало последнего
+>   файла (совпадает с FakeTape и с трактовкой MTBSFM в st);
+> - linuxtape: константы MT* — из include/uapi/linux/mtio.h (legacy-файл
+>   tape_ctrl.go содержит те же значения; сверено с ядром);
+>   `mtIOCTOP = 0x40086d01` — кодировка asm-generic, поэтому файлы
+>   реализации ограничены `tape && linux` и списком arch
+>   (amd64/arm64/386/arm/riscv64/loong64/s390x); doc.go остался под
+>   одним тегом `tape`, чтобы `go build -tags tape ./...` проходил на
+>   любой платформе;
+> - `sendTapeCommand(fd, op, count)` — как в плане; `golang.org/x/sys`
+>   переведён из indirect в direct (он уже был в дереве зависимостей
+>   viper'а, список README не расширен);
+> - ENOSPC при записи не маппится в `domain.TapeFullError` внутри
+>   адаптера (адаптер не знает счётчиков сессии) — это задача use case
+>   Этапа 6;
+> - test/hardware: базовые ручные тесты (ярлык+двойной EOF, навигация
+>   MTFSF/MTBSFM/MTEOM с дозаписью, eject); устройство — env
+>   `LENTOVODEC_TAPE_DEVICE` (по умолчанию `/dev/nst0`), при отсутствии
+>   устройства тесты скипаются; расширение — в Этапе 9.
 
 **Файлы:**
 - `internal/adapter/filetape/filetape.go` — реализация `port.Tape` поверх
