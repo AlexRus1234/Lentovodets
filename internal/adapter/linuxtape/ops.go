@@ -41,14 +41,23 @@ type mtop struct {
 // на файловом дескрипторе fd устройства /dev/nst*.
 func sendTapeCommand(fd uintptr, op int16, count int32) error {
 	arg := mtop{op: op, count: count}
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		fd,
-		uintptr(mtIOCTOP),
-		uintptr(unsafe.Pointer(&arg)),
-	)
-	if errno != 0 {
+	for {
+		_, _, errno := unix.Syscall(
+			unix.SYS_IOCTL,
+			fd,
+			uintptr(mtIOCTOP),
+			uintptr(unsafe.Pointer(&arg)),
+		)
+		if errno == 0 {
+			return nil
+		}
+		if errno == unix.EINTR {
+			// Ожидание в st_ioctl прерываемо до старта команды (сигнал,
+			// в т.ч. SIGURG от вытеснения горутин Go); ioctl не
+			// перезапускается ядром даже с SA_RESTART — повтор
+			// безопасен: команда ещё не началась.
+			continue
+		}
 		return fmt.Errorf("linuxtape: ioctl op=%d count=%d: %w", op, count, errno)
 	}
-	return nil
 }
