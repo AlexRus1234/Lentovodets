@@ -1,87 +1,194 @@
-# Lentovodets
+<!--
+Лентоводец — система резервного копирования на ленточные накопители LTO
+Copyright (C) 2026 AlexRus1234
 
-Самописная система резервного копирования на ленточные стримеры LTO
-(по умолчанию `/dev/nst0`), с каталогом в SQLite и двумя интерфейсами
-управления: CLI и Web.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-> Имя проекта — **Lentovodets**; имя модуля Go, бинаря и конфига —
-> `lentovodec` (`lentovodec.toml`, env-префикс `LENTOVODEC_*`).
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
 
-> **Статус:** реализованы все этапы 0–10 (domain → ports → адаптеры →
-> use cases → CLI/Web → UI → интеграционные тесты → CI). История — в
-> [docs/ROADMAP.md](docs/ROADMAP.md), изменения — в
-> [docs/CHANGELOG.md](docs/CHANGELOG.md).
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
 
-> Старая реализация сохранена как референс в `legacy/nil-backup/`
-> (локально, в git не коммитится); из нового кода она не импортируется —
-> см. [docs/LEGACY_REFERENCE.md](docs/LEGACY_REFERENCE.md).
+**Русский**
+
+<div align="center">
+
+<h1>Лентоводец</h1>
+
+**Система резервного копирования на ленточные накопители LTO**
+
+Лентоводец представляет собой автономную систему резервного копирования
+на ленточные стримеры LTO. CLI, HTTP-демон с Web UI и кодек ленты
+объединены в одном исполняемом файле; метаданные всех кассет, сессий и
+файлов хранятся в локальном каталоге SQLite. Внешняя СУБД и контейнерная
+инфраструктура не требуются, root-права не нужны.
+
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg?style=flat-square)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?style=flat-square)](https://go.dev/)
+[![Vue](https://img.shields.io/badge/Vue-3-4FC08D.svg?style=flat-square)](https://vuejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-7-646CFF.svg?style=flat-square)](https://vite.dev/)
+[![Platform](https://img.shields.io/badge/Linux-any-1793D1.svg?style=flat-square)](#быстрый-старт)
+
+</div>
+
+---
+
+## Содержание
+
+- [Возможности](#возможности)
+- [Быстрый старт](#быстрый-старт)
+- [Конфигурация](#конфигурация)
+- [Права доступа](#права-доступа)
+- [CLI, API и Web UI](#cli-api-и-web-ui)
+- [Развёртывание](#развёртывание)
+- [Структура проекта](#структура-проекта)
+- [Технологический стек](#технологический-стек)
+- [Разработка](#разработка)
+- [Лицензия](#лицензия)
+
+> Расширенная документация по возможностям, CLI, REST API, формату ленты
+> и развёртыванию приведена в каталоге [`docs/func/ru/`](docs/func/ru/README.md).
+> Настоящий файл содержит обзор системы и инструкцию по первоначальному запуску.
+
+Проект разработан в соответствии с заранее определённой архитектурой; при
+подготовке исходного кода использовался ИИ-ассистент.[^1]
+
+---
 
 ## Возможности
 
-- Инкрементальные бекапы по mtime+size+xxhash64; режимы `append`
-  (дозапись версий) и `mirror` (tombstone'ы удалений, восстановление
-  воссоздаёт актуальное состояние дерева).
-- Собственный двоичный формат ленты ([docs/FORMAT.md](docs/FORMAT.md)):
-  JSON-ярлык кассеты, JSON-индекс + tar-поток на сессию, filemark-инварианты,
-  проверка xxhash при любом чтении.
-- Каталог SQLite: кассеты, сессии, копии файлов; поиск, prune, smart-restore
-  со свежей копии и fallback'ом на старые при порче.
-- Rootless: стример управляется без root (группа `tape`), демон и CLI —
-  один выделенный пользователь.
+### Резервное копирование
+
+- Инкрементальные бекапы: новые и изменённые файлы определяются по
+  размеру, mtime и xxhash64
+- Режимы заданий `append` (версионная дозапись) и `mirror` (tombstone'ы
+  удалений — восстановление реконструирует зеркало каталога на момент
+  любой сессии)
+- Полные (`--full`) и инкрементальные сессии; первая сессия кассеты всегда
+  FULL; `--dry-run` для пробного прогона
+- Exclude-фильтры: glob и doublestar (`**/.DS_Store`, `.git/**`,
+  `node_modules`)
+- Статистика сессии (просмотрено/добавлено/изменено/удалено/байты) и
+  прогресс в реальном времени (текущий файл, %, скорость)
+
+### Восстановление
+
+- **Full** — вся кассета подряд; повреждённые сессии пропускаются с
+  переходом к следующим
+- **Selective** — выбранные пути из конкретной сессии (Web UI)
+- **Smart** — по путям через каталог: берётся свежая копия, при порче
+  блока выполняется fallback на более старые; ни одной здоровой копии →
+  понятная ошибка
+- xxhash64 сверяется при любом восстановлении
+- Восстановление в безопасный каталог (`--dest`) или по исходным путям
+  (`--original`)
+
+### Каталог
+
+- SQLite (WAL): кассеты, сессии, копии файлов всех сессий
+- Поиск по подстроке, фильтрация по кассете, удаление сессий, prune
+  устаревших
+- Smart-restore опирается на каталог и умеет переживать физическую порчу
+  отдельной копии файла
+
+### Лента
+
+- Собственный формат `LENTOVODEC_TAPE_V2`: JSON-ярлык кассеты, сессии
+  «JSON-индекс + tar-поток» с filemark-инвариантами (детали —
+  [`docs/func/ru/tape-format.md`](docs/func/ru/tape-format.md))
+- `format` (UUID и имя кассеты), `readtest` (диагностическое чтение со
+  сверкой хешей без записи на ФС), `eject`, `info`
+- Кассеты legacy `nil-backup` намеренно не читаются
+- Эмулятор `filetape`: обычный файл ведёт себя как лента — разработка и
+  CI на любой ОС без стримера
+
+### Интерфейсы и безопасность
+
+- CLI: local-команды работают с лентой напрямую, daemon-команды — через
+  HTTP API
+- Демон: фоновые задачи бекапа/восстановления (одна активная — стример
+  один), REST API, graceful shutdown
 - Web UI (Vue 3, встроен в бинарь): лента, задания, каталог, файлы,
-  восстановление, прогресс; REST API с bcrypt-логином, сессиями и
-  rate-limit'ом.
+  восстановление; русский и английский языки
+- Аутентификация: логин/пароль (bcrypt) + Bearer-сессии в памяти,
+  `X-API-Key` для скриптов, rate-limit на логин
+- Rootless: стример управляется без root и без `CAP_SYS_RAWIO` (группа
+  `tape`); демон по умолчанию слушает только loopback
 
-## Требования
+Подробное описание приведено в [`docs/func/ru/features.md`](docs/func/ru/features.md).
 
-| Что                     | Зачем                                        |
-| ----------------------- | -------------------------------------------- |
-| Go 1.26+                | сборка (`go.mod` требует 1.26.1+)            |
-| Node 22+ / npm          | сборка Web UI (`make web-build`, только для сборки) |
-| Linux + `/dev/nst*`     | реальный стример (группа `tape`)             |
-| Windows / macOS         | dev/CI: эмулятор ленты `filetape` (без тега `tape`) |
+---
+
+## Быстрый старт
+
+### Требования
+
+| Компонент | Версия | Назначение |
+|---|---|---|
+| **Go** | 1.26+ | Сборка бинарника |
+| **Node.js** | 22+ | Сборка Web UI |
+| **Linux + LTO-стример** | `/dev/nst*` | Рабочее окружение |
+| Windows / macOS | — | Разработка без стримера (эмулятор `filetape`) |
+
+### Сборка
+
+```bash
+# Сборка Web UI и серверной части в порядке, используемом CI:
+make web-build
+make build        # бинарь bin/lentovodec (без драйвера стримера)
+make build-tape   # то же + adapter/linuxtape (build tag `tape`, Linux)
+```
 
 CGO не требуется (SQLite — `modernc.org/sqlite`), бинарь статический.
 
-## Сборка и установка
-
-Из исходников:
+Сборка для рабочей среды (как в CI):
 
 ```bash
-make web-build   # Web UI → internal/iface/web/assets (на fresh clone —
-                 # обязательно ДО make build: бандл встраивается //go:embed)
-make build       # бинарь bin/lentovodec
-make build-tape  # то же + adapter/linuxtape (build tag `tape`, Linux)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -tags tape -trimpath -ldflags="-s -w \
+  -X lentovodec/cmd/lentovodec.Version=1.0.0" \
+  -o lentovodec ./cmd/lentovodec
 ```
 
-Готовый бинарь — из CI: ручной прогон
-[`Build and Test Lentovodets`](.forgejo/workflows/build.yml) с input
-`push_to_registry=true` кладёт `lentovodets-<version>-linux-amd64`(+`.sha256`)
-в [Packages](https://git.yadr00.internal/AlexRus1234/-/packages?q=lentovodets)
-и в [Releases](https://git.yadr00.internal/AlexRus1234/Lentovodets/releases).
-`<version>` — точный тег `v*` на HEAD, input `version_tag`, либо `sha-<hex8>`.
+> Релизные бинарники публикуются вручную из CI в Packages и Releases
+> Forgejo (`lentovodets-<version>-linux-amd64` + `.sha256`); `<version>` —
+> точный тег `v*` на HEAD, input `version_tag` либо `sha-<hex8>`. Для
+> разработки сборка выполняется из исходного кода.
 
-Проверка и установка:
+### Запуск
 
 ```bash
-sha256sum -c lentovodets-v1.0.0-linux-amd64.sha256
-install -m 0755 lentovodets-v1.0.0-linux-amd64 /usr/local/bin/lentovodec
+# 1. Задание бекапа (запись в lentovodec.toml):
+lentovodec jobs add media --paths /tank/data/media --mode mirror \
+    --exclude "**/.DS_Store,**/*.partial"
+
+# 2. Кассета. Устройство задаётся --device (по умолчанию /dev/nst0);
+#    обычный файл работает как эмулятор ленты (dev/test):
+lentovodec --device /tmp/tape.img tape format LTO-001
+lentovodec --device /tmp/tape.img backup media
+
+# 3. Восстановление:
+lentovodec --device /tmp/tape.img restore \
+    --paths /tank/data/media/movie.mkv --dest /safe
+
+# 4. Демон: REST API + Web UI на http://127.0.0.1:29201
+lentovodec passwd     # bcrypt-хеш → web_password_hash в TOML
+lentovodec daemon
 ```
 
-## Быстрый старт (CLI)
-
-```bash
-lentovodec jobs add media --paths /tank/data --mode mirror
-lentovodec passwd           # bcrypt-хеш → web_password_hash в TOML
-lentovodec tape format LTO-001
-lentovodec backup media
-lentovodec restore --paths /tank/data/a.txt --dest /safe
-lentovodec daemon           # REST API + Web UI на 127.0.0.1:29201
-```
+---
 
 ## Конфигурация
 
-`lentovodec.toml` (по умолчанию в рабочем каталоге; `--config PATH`):
+`lentovodec.toml` (по умолчанию в рабочем каталоге; глобальный флаг
+`--config`):
 
 ```toml
 db    = "lentovodec.db"
@@ -92,11 +199,11 @@ log_level = "info"           # debug | info | warn | error
 
 # --- Web-доступ (демон) ---
 bind = "127.0.0.1:29201"     # loopback = из сети не виден (SSH-туннель);
-                             # LAN-адрес — осознанный выбор, потребует auth
-web_username = "admin"       # одна учётка; пустая = auth выключен
+                             # LAN-адрес — осознанный выбор, потребует пароль
+web_username = "admin"       # учётка ровно одна; пустая строка = auth выключен
                              # (разрешено ТОЛЬКО при bind на loopback)
 web_password_hash = "$2a$..." # bcrypt; генерируется `lentovodec passwd`
-api_key = ""                 # ключ для скриптов (X-API-Key); пустой — выключен
+api_key = ""                 # ключ для скриптов (X-API-Key); пустой — отключён
 session_ttl = "72h"
 
 [[jobs]]
@@ -107,218 +214,154 @@ Paths = ["/tank/data/media"]
 Exclude = ["**/.DS_Store", "**/*.partial"]
 ```
 
-Слои: defaults → TOML → env (`LENTOVODEC_DEVICE`, `LENTOVODEC_DB`, …) →
-флаги. Секреты (`web_password_hash`, `api_key`) через env не передаются —
-только TOML с правами 0600.
+Слои применения: defaults → TOML → env (`LENTOVODEC_DEVICE`,
+`LENTOVODEC_DB`, …) → флаги CLI. Секреты (`web_password_hash`, `api_key`)
+через env не передаются — только TOML с правами 0600.
 
-## CLI
+---
 
-Глобальные флаги: `--config`, `--device`, `--db`, `--log`, `--server`,
-`-v/--verbose`.
+## Права доступа
 
-| Команда                                    | Режим       | Описание                                            |
-| ------------------------------------------ | ----------- | --------------------------------------------------- |
-| `lentovodec backup <job> [--full]`         | local       | Запустить задание                                   |
-| `lentovodec restore [--paths p1,p2]`       | local       | `--paths` → smart; иначе full. `--dest`, `--original` |
-| `lentovodec tape format <name> [--force]`  | local       | Форматировать ленту                                 |
-| `lentovodec tape readtest`                 | local       | Диагностическое чтение                              |
-| `lentovodec tape info`                     | daemon      | Прочитать ярлык                                     |
-| `lentovodec tape eject`                    | daemon      | Извлечь ленту                                       |
-| `lentovodec jobs list`                     | local       | Показать задания из TOML                            |
-| `lentovodec jobs add <name>`               | local       | Добавить задание (`--paths`, `--mode`, `--desc`, `--exclude`) |
-| `lentovodec jobs remove <name>`            | local       | Удалить задание                                     |
-| `lentovodec catalog tapes`                 | daemon      | Список кассет                                       |
-| `lentovodec catalog sessions [--tape U]`   | daemon      | Список сессий                                       |
-| `lentovodec catalog files --session N`     | daemon      | Файлы сессии                                        |
-| `lentovodec catalog search <pattern>`      | daemon      | Поиск файлов                                        |
-| `lentovodec catalog rm --session N`        | daemon      | Удалить сессию из каталога                          |
-| `lentovodec catalog prune --days N`        | daemon      | Удалить сессии старше N дней                        |
-| `lentovodec passwd`                        | local       | bcrypt-хеш для `web_password_hash` (пароль дважды)  |
-| `lentovodec daemon [--port 29201] [--bind 127.0.0.1]` | server | Запустить демона |
+Управление стримером **не требует root**: `/dev/nst*` — обычное
+character-устройство (группа `tape`), ioctl ленты не требуют
+`CAP_SYS_RAWIO`. Критерий доступа — успешное открытие устройства (probe
+на старте команд и демона), а не `uid == 0`; при `EACCES`/`ENOENT` —
+понятная ошибка с подсказкой (`usermod -aG tape <user>`).
 
-`local` — прямой доступ к ленте, демон не нужен. `daemon` — команда идёт в
-HTTP API (`--server`): `api_key` из TOML, либо интерактивный логин и
-Bearer-токен. Полная семантика — [SPECIFICATION §5](docs/SPECIFICATION.md).
-
-## Web UI
-
-- Прод: бандл встроен в бинарь (`//go:embed`), демон раздаёт его на
-  `bind` (по умолчанию `http://127.0.0.1:29201`). Вход —
-  `web_username`/`web_password_hash`; на loopback-бинде без учётки
-  аутентификация выключена.
-- Дев: `make web-dev` — Vite на `:5173` с прокси `/api` на демона.
-- Удалённый доступ — SSH-туннель (по умолчанию демон из сети не виден):
-
-  ```bash
-  ssh -L 29201:127.0.0.1:29201 lentovodec@server
-  # затем локально: http://localhost:29201
-  ```
-
-## Rootless-развёртывание
-
-Root для стримера не нужен: `/dev/nst*` — character-устройство группы
-`tape`, ioctl ленты не требуют `CAP_SYS_RAWIO`. Критерий доступа — успешное
-открытие устройства (probe на старте), не `uid == 0`; при EACCES/ENOENT —
-подсказка `usermod -aG tape <user>`. Root нужен только для
-`--preserve-ownership` (chown) и путей, закрытых правами.
-
-Демон и **все** local-команды должны работать от одного пользователя: у
-SQLite в WAL рядом с БД лежат `db-wal`/`db-shm`.
-
-### 1. Пользователь и группа
+Демон и все local-команды должны работать от **одного** пользователя: у
+SQLite в WAL-режиме рядом с БД лежат `db-wal`/`db-shm`.
 
 ```bash
 useradd --system --home-dir /var/lib/lentovodec --create-home \
         --shell /usr/sbin/nologin lentovodec
-usermod -aG tape lentovodec     # группа вступает в силу в НОВОЙ сессии
+usermod -aG tape lentovodec
 ```
 
-Проверка (без релогина демона): `sudo -u lentovodec test -r /dev/nst0 && echo ok`.
+Полное руководство (udev, каталоги данных, systemd-юнит с харднингом,
+проверка стенда на реальном стримере) — в
+[`docs/func/ru/os-setup.md`](docs/func/ru/os-setup.md).
 
-### 2. udev
+---
 
-В дистрибутивах с `systemd` группа `tape` на `/dev/nst*` обычно уже
-назначена; проверьте `ls -l /dev/nst0`. Если нет — правило
-`/etc/udev/rules.d/88-tape.rules`:
+## CLI, API и Web UI
 
-```
-KERNEL=="nst[0-9]*", GROUP="tape", MODE="0660"
-```
+| Интерфейс | Кратко | Подробности |
+|---|---|---|
+| **CLI** | `backup`, `restore`, `tape`, `jobs`, `catalog`, `passwd`, `daemon`; local-команды — прямой доступ к ленте, daemon-команды — HTTP | [`docs/func/ru/cli.md`](docs/func/ru/cli.md) |
+| **REST API** | `/api/*`: аутентификация, лента, задания, фоновые задачи, каталог | [`docs/func/ru/api.md`](docs/func/ru/api.md) |
+| **Web UI** | Экраны Login, Tape, Jobs, Catalog, Files; RU/EN; встроен в бинарь (`go:embed`) | [`docs/func/ru/api.md`](docs/func/ru/api.md) |
 
-и `udevadm control --reload && udevadm trigger`.
-
-### 3. Конфиг и данные
+Демон — «инструмент одной машины»: по умолчанию слушает `127.0.0.1:29201`
+и из сети не виден. Управление с другой машины — через SSH-туннель:
 
 ```bash
-install -d -m 0750 -o lentovodec -g lentovodec /var/lib/lentovodec
-install -d -m 0755 /etc/lentovodec
-install -m 0640 -o lentovodec -g lentovodec lentovodec.toml /etc/lentovodec/
+ssh -L 29201:127.0.0.1:29201 lentovodec@server
+# затем на ноутбуке: http://localhost:29201
 ```
 
-В TOML: `db = "/var/lib/lentovodec/lentovodec.db"`,
-`log = "/var/lib/lentovodec/lentovodec.log"`. Конфиг для демона —
-только чтение (запись заданий `jobs add` выполняйте от того же
-пользователя с правами записи в TOML).
+Прямой доступ из LAN — осознанный выбор оператора (меняется `bind`); при
+этом демон требует настроенный пароль и без него отказывается стартовать.
 
-### 4. systemd-юнит с харднингом
+---
 
-`/etc/systemd/system/lentovodec.service`:
+## Развёртывание
 
-```ini
-[Unit]
-Description=Lentovodets tape backup daemon
-After=local-fs.target
+Типовое развёртывание в Linux — выделенный пользователь `lentovodec`
+(группа `tape`), данные в `/var/lib/lentovodec`, конфиг в
+`/etc/lentovodec`, systemd-юнит с харднингом (`ProtectSystem=strict`,
+`SystemCallFilter=@system-service` и др.).
 
-[Service]
-Type=simple
-User=lentovodec
-Group=lentovodec
-SupplementaryGroups=tape
-StateDirectory=lentovodec
-WorkingDirectory=/var/lib/lentovodec
-ExecStart=/usr/local/bin/lentovodec daemon --config /etc/lentovodec/lentovodec.toml
-Restart=on-failure
-RestartSec=5
+Пошаговая инструкция — в [`docs/func/ru/os-setup.md`](docs/func/ru/os-setup.md).
 
-# --- Hardening ---
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/lentovodec
-PrivateTmp=true
-# PrivateDevices НЕ включать: нужен доступ к /dev/nst0
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-ProtectClock=true
-ProtectHostname=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-RestrictNamespaces=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @obsolete
-CapabilityBoundingSet=
-AmbientCapabilities=
+---
 
-[Install]
-WantedBy=multi-user.target
+## Структура проекта
+
+```
+.
+├── cmd/lentovodec/          # Точка входа: wiring (~50 строк)
+├── internal/
+│   ├── domain/              # Чистые типы: Job, FileMeta, Session, TapeLabel, ошибки
+│   ├── port/                # Интерфейсы: Tape, Filesystem, Catalog, Clock, Rand, …
+│   ├── usecase/             # Оркестрация: scan, backup, restore, format, catalog
+│   ├── adapter/             # Реализации портов: tapeformat, linuxtape, filetape,
+│   │                        # osfs, sqlite, tomlconfig, xxhash, sloglog
+│   ├── iface/               # Доставка: cli (cobra), web (chi + REST + embed), destfs
+│   └── testutil/            # Общие test doubles (FakeTape, MapFS, MemCatalog, …)
+├── test/
+│   ├── integration/         # Сквозные сценарии на реальных адаптерах (без железа)
+│   └── hardware/            # //go:build tape — прогон на реальном стримере
+├── web/                     # Исходники Vue 3 + Vite (бандл → iface/web/assets)
+├── docs/                    # func/ru/ — пользовательская документация;
+│                            # ARCHITECTURE/SPECIFICATION/FORMAT/… — для разработки
+├── .forgejo/workflows/      # CI: сборка, тесты, публикация релиза
+├── LICENSE                  # GNU GPL v3
+└── README.md                # Основная документация
 ```
 
-```bash
-systemctl daemon-reload
-systemctl enable --now lentovodec
-```
+Бизнес-логика (`domain`, `usecase`) не импортирует `os`, `syscall`, `net`
+и конкретные адаптеры — весь ввод-вывод через интерфейсы `internal/port`;
+правило проверяется линтером `depguard`.
 
-Graceful shutdown встроен: SIGTERM → HTTP Shutdown (5 с) + ожидание
-активной ленточной задачи (до 30 с).
+---
 
-## CI
+## Технологический стек
 
-`.forgejo/workflows/build.yml` — ручной запуск (`workflow_dispatch`) в
-fedora:44-контейнере:
+**Бэкенд:** Go 1.26 · cobra / viper · chi v5 · modernc.org/sqlite (без
+CGO) · cespare/xxhash/v2 · golang.org/x/crypto (bcrypt) ·
+bmatcuk/doublestar/v4 · `log/slog` · `go:embed`.
 
-1. сборка Web UI (Node 22) → статического бинаря (Go 1.26, CGO off,
-   `-trimpath`, версия из тега `-v*` / input / `sha-<hex8>`);
-2. `go vet`, `gofmt -l`, тесты (`-race` — опционально), отчёт покрытия
-   (информационный);
-3. при `push_to_registry=true` — бинарник + sha256 в Forgejo Packages
-   (generic `lentovodets`) и в Release репозитория.
+**Фронтенд:** Vue 3 (Composition API) · Vite 7 · TypeScript 5.9 (vue-tsc).
 
-Hardware-тесты на реальном стримере в CI не гоняются: `test/hardware/`
-(build tag `tape`) запускается вручную на машине с приводом —
-`LENTOVODEC_TAPE_DEVICE=/dev/nst0 go test -tags tape ./test/hardware/...`.
+**Инфраструктура и качество:** Forgejo Actions (CI) · golangci-lint
+(строгий конфиг, depguard) · `go vet` / `gofmt` · `go test` (включая
+`-race`) · unit- / integration- / hardware-уровни тестов.
+
+---
 
 ## Разработка
 
-| Команда          | Назначение                                        |
-| ---------------- | ------------------------------------------------- |
-| `make lint`      | `golangci-lint run ./...` (строгий конфиг)        |
-| `make vet`       | `go vet ./...`                                    |
-| `make test`      | `go test ./...`                                   |
-| `make test-race` | `go test -race ./...`                             |
-| `make cover`     | покрытие, итоговая строка                         |
-| `make build`     | `go build -o bin/lentovodec ./cmd/lentovodec`     |
-| `make build-tape`| сборка с тегом `tape` (включает `adapter/linuxtape`) |
-| `make web-build` | Vite-сборка Vue UI в `internal/iface/web/assets/` |
-| `make web-dev`   | dev-сервер Vite с прокси на `:29201`              |
-| `make clean`     | удалить `bin/`, `coverage/`, web-бандл            |
+| Команда | Назначение |
+|---|---|
+| `make lint` | `golangci-lint run ./...` (строгий конфиг) |
+| `make vet` | `go vet ./...` |
+| `make test` | `go test ./...` |
+| `make test-race` | `go test -race ./...` |
+| `make cover` | Отчёт о покрытии |
+| `make build` | Сборка `bin/lentovodec` |
+| `make build-tape` | Сборка с тегом `tape` (драйвер реального стримера) |
+| `make web-build` | Vite-сборка Web UI в `internal/iface/web/assets/` |
+| `make web-dev` | Dev-сервер Vite с прокси `/api` на `:29201` |
+| `make clean` | Удалить `bin/`, `coverage/`, web-бандл |
 
-Coverage-цели — [docs/TESTING.md §4](docs/TESTING.md); фактические
-значения по этапам — заметки в [docs/ROADMAP.md](docs/ROADMAP.md).
+Fresh clone: сначала `make web-build` (бандл встраивается через
+`//go:embed`), затем `make build`.
 
-Главное архитектурное правило:
-
-> **Бизнес-логика (`internal/domain`, `internal/usecase`) не имеет права
-> импортировать `os`, `syscall`, `net` и любые конкретные адаптеры.** Весь
-> ввод-вывод — через интерфейсы из `internal/port`. Проверяется линтером
-> `depguard`. Время — только через `port.Clock`, случайность — через
-> `port.Rand`.
-
-Перед правками читайте документацию (порядок для нового исполнителя):
+Документация для разработчиков (порядок чтения перед правками):
 
 1. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — слои, правила импортов.
 2. [docs/SPECIFICATION.md](docs/SPECIFICATION.md) — требования, CLI, REST API, схема БД.
-3. [docs/FORMAT.md](docs/FORMAT.md) — двоичный формат ленты.
-4. [docs/ROADMAP.md](docs/ROADMAP.md) — план и история этапов.
-5. [docs/TESTING.md](docs/TESTING.md) — стратегия тестирования.
-6. [docs/LEGACY_REFERENCE.md](docs/LEGACY_REFERENCE.md) — что брать из `legacy/`.
+3. [docs/FORMAT.md](docs/FORMAT.md) — канон двоичного формата ленты.
+4. [docs/TESTING.md](docs/TESTING.md) — стратегия тестирования.
+5. [docs/ROADMAP.md](docs/ROADMAP.md) — план и история этапов.
+6. [docs/CHANGELOG.md](docs/CHANGELOG.md) — изменения между релизами.
 
-## Зафиксированные технологические решения
+---
 
-| Параметр             | Значение                                  |
-| -------------------- | ----------------------------------------- |
-| Имя проекта          | Lentovodets                                |
-| Имя модуля и бинаря  | `lentovodec`                               |
-| Язык                 | Go 1.26+ (без CGO)                         |
-| Архитектура          | Hexagonal (Ports & Adapters)               |
-| Логирование          | `log/slog` (стандартная библиотека)        |
-| Линтер               | `golangci-lint` (строгая конфигурация)     |
-| База данных          | SQLite через `modernc.org/sqlite`          |
-| HTTP-роутер          | `go-chi/chi/v5`                            |
-| CLI                  | `spf13/cobra` + `spf13/viper`              |
-| Web UI               | Vue 3 + Vite, бандлится в `embed.FS`       |
-| Web-доступ           | bcrypt + сессии в памяти; bind по умолчанию loopback:29201 |
-| Формат ленты         | новый, старые кассеты legacy не читаются   |
+## Лицензия
+
+Проект распространяется под лицензией **[GNU General Public License v3.0](LICENSE)**.
+
+```
+Лентоводец — система резервного копирования на ленточные накопители LTO
+Copyright (C) 2026  AlexRus1234
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+```
+
+[^1]: Разработка исходного кода выполнялась с использованием ИИ-ассистента в
+соответствии с заранее определённой архитектурой проекта; архитектурные решения,
+проверка результатов и итоговая интеграция осуществлялись автором.
