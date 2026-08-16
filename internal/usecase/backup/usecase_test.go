@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"lentovodec/internal/domain"
@@ -36,8 +37,12 @@ var fixedTime = time.Unix(1700000000, 0).UTC()
 
 // fakeConfig — ConfigSource с одним заданием.
 type fakeConfig struct {
-	jobs []domain.Job
-	err  error
+	jobs        []domain.Job
+	err         error
+	capacity    int64
+	minTail     int64
+	capacityErr error
+	minTailErr  error
 }
 
 func (c *fakeConfig) Jobs() ([]domain.Job, error) { return c.jobs, c.err }
@@ -46,6 +51,8 @@ func (c *fakeConfig) DB() string                  { return "db" }
 func (c *fakeConfig) Log() string                 { return "log" }
 func (c *fakeConfig) Server() string              { return "srv" }
 func (c *fakeConfig) LogLevel() string            { return "info" }
+func (c *fakeConfig) Capacity() (int64, error)    { return c.capacity, c.capacityErr }
+func (c *fakeConfig) MinTail() (int64, error)     { return c.minTail, c.minTailErr }
 
 func jobsAppend() []domain.Job {
 	return []domain.Job{{Name: "daily", Mode: domain.ModeAppend, Paths: []string{"/etc"}}}
@@ -91,6 +98,7 @@ type harness struct {
 	codec       *testutil.FakeCodec
 	cat         *testutil.MemCatalog
 	overrideCat port.Catalog
+	cfg         *fakeConfig // nil — обычный fakeConfig с jobsAppend
 	rand        port.Rand
 	fs          *testutil.MapFS
 	uc          *backup.UseCase
@@ -132,7 +140,11 @@ func (h *harness) build(t port.Tape) *backup.UseCase {
 	if rnd == nil {
 		rnd = testutil.FixedRand("run-uuid")
 	}
-	return backup.New(&fakeConfig{jobs: jobsAppend()}, t, h.codec, cat, h.fs,
+	cfg := h.cfg
+	if cfg == nil {
+		cfg = &fakeConfig{jobs: jobsAppend()}
+	}
+	return backup.New(cfg, t, h.codec, cat, h.fs,
 		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
 		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger())
 }
@@ -620,6 +632,7 @@ type failCatalogBy struct {
 	*testutil.MemCatalog
 	listSessions  error
 	getFiles      error
+	getFilesFor   int64 // с getFiles: падает только сессия с этим PK
 	deleteSession error
 	createSession error
 	saveFiles     error
@@ -633,7 +646,7 @@ func (c *failCatalogBy) ListSessions(ctx context.Context, tapeUUID string) ([]do
 }
 
 func (c *failCatalogBy) GetFilesBySession(ctx context.Context, sessionID int64) ([]domain.FileMeta, error) {
-	if c.getFiles != nil {
+	if c.getFiles != nil && (c.getFilesFor == 0 || c.getFilesFor == sessionID) {
 		return nil, c.getFiles
 	}
 	return c.MemCatalog.GetFilesBySession(ctx, sessionID)
@@ -782,5 +795,215 @@ func TestBackup_ErrorPaths(t *testing.T) {
 				t.Fatal("ожидалась ошибка")
 			}
 		})
+	}
+}
+
+// spanFiles — три файла по 60/50/60 байт: при бюджете 100 режутся
+// на 3 части.
+func spanFiles() map[string]string {
+	return map[string]string{
+		"etc/a": strings.Repeat("a", 60),
+		"etc/b": strings.Repeat("b", 50),
+		"etc/c": strings.Repeat("c", 60),
+	}
+}
+
+// TestBackup_PlannerDryRun — планировщик в DryRun: части посчитаны,
+// бюджет полной ёмкости (первая сессия), лента и каталог не тронуты.
+func TestBackup_PlannerDryRun(t *testing.T) {
+	h := newHarness(t, spanFiles())
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
+	h.rebuild()
+	res, err := h.uc.Backup(context.Background(), "daily", backup.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Backup(DryRun): %v", err)
+	}
+	if res.PlannedParts != 3 {
+		t.Errorf("PlannedParts = %d; want 3 (60/50/60 при бюджете 100)", res.PlannedParts)
+	}
+	if res.PlannedByBudget {
+		t.Error("PlannedByBudget = true; want false (первая сессия — бюджет capacity)")
+	}
+	if len(h.codec.WroteHeaders) != 0 || h.fakeTape.MarkCount() != 2 {
+		t.Errorf("DryRun тронул ленту: записей %d, меток %d", len(h.codec.WroteHeaders), h.fakeTape.MarkCount())
+	}
+	sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+	if len(sessions) != 0 {
+		t.Errorf("DryRun создал сессии: %+v", sessions)
+	}
+}
+
+// TestBackup_FileTooLargeBeforeWrite — файл больше кассеты ловится
+// планировщиком до записи: лента и каталог не тронуты.
+func TestBackup_FileTooLargeBeforeWrite(t *testing.T) {
+	h := newHarness(t, map[string]string{"etc/hosts": strings.Repeat("x", 150)})
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
+	h.rebuild()
+	_, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+	var tooBig *domain.FileTooLargeError
+	if !errors.As(err, &tooBig) {
+		t.Fatalf("Backup: %v; want FileTooLargeError", err)
+	}
+	if tooBig.Path != "/etc/hosts" || tooBig.Size != 150 || tooBig.Capacity != 100 {
+		t.Errorf("FileTooLargeError = %+v; want /etc/hosts 150/100", tooBig)
+	}
+	if len(h.codec.WroteHeaders) != 0 || h.fakeTape.MarkCount() != 2 {
+		t.Errorf("лента тронута: записей %d, меток %d; want 0/2 (только ярлык)",
+			len(h.codec.WroteHeaders), h.fakeTape.MarkCount())
+	}
+	sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+	if len(sessions) != 0 {
+		t.Errorf("сессия создана перед записью: %+v", sessions)
+	}
+	if h.prog.fails != 0 || h.prog.done != 0 {
+		t.Errorf("прогресс: fails=%d done=%d; want 0/0 (сбой до записи)", h.prog.fails, h.prog.done)
+	}
+}
+
+// TestBackup_MultiPartContinuesSingleTape — части >1 без spanning:
+// поведение не меняется, сессия пишется целиком одной кассетой.
+func TestBackup_MultiPartContinuesSingleTape(t *testing.T) {
+	h := newHarness(t, spanFiles())
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
+	h.rebuild()
+	res, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	if res.PlannedParts != 3 {
+		t.Errorf("PlannedParts = %d; want 3", res.PlannedParts)
+	}
+	if res.Session.Num != 1 {
+		t.Errorf("сессия: %+v; want Num=1", res.Session)
+	}
+	files, err := h.cat.GetFilesBySession(context.Background(), res.Session.ID)
+	if err != nil {
+		t.Fatalf("GetFilesBySession: %v", err)
+	}
+	if len(files) != 4 { // /etc + три файла
+		t.Errorf("файлов в каталоге %d; want 4", len(files))
+	}
+}
+
+// TestBackup_AppendBudgetFromRemainder — бюджет дозаписи: capacity
+// минус Σ байт прошлых сессий (tombstone'ы не считаются).
+func TestBackup_AppendBudgetFromRemainder(t *testing.T) {
+	h := newHarness(t, map[string]string{"etc/hosts": strings.Repeat("x", 100)})
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 1000, minTail: 10}
+	h.rebuild()
+	ctx := context.Background()
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#1: %v", err)
+	}
+	// новый файл 200 байт: остаток 1000−100=900 вмещает его целиком
+	h.fs.MapFS["etc/new"] = &fstest.MapFile{Data: []byte(strings.Repeat("n", 200)), Mode: 0o644}
+	res, err := h.uc.Backup(ctx, "daily", backup.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Backup#2(DryRun): %v", err)
+	}
+	if !res.PlannedByBudget {
+		t.Error("PlannedByBudget = false; want true (дозапись в остаток)")
+	}
+	if res.PlannedParts != 1 {
+		t.Errorf("PlannedParts = %d; want 1", res.PlannedParts)
+	}
+}
+
+// TestBackup_AppendMinTailForcesNewTape — остаток меньше min_tail:
+// бюджет 0, вся сессия на новую кассету (PlannedByBudget=false).
+func TestBackup_AppendMinTailForcesNewTape(t *testing.T) {
+	h := newHarness(t, map[string]string{"etc/hosts": strings.Repeat("x", 100)})
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 1000, minTail: 950}
+	h.rebuild()
+	ctx := context.Background()
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#1: %v", err)
+	}
+	h.fs.MapFS["etc/new"] = &fstest.MapFile{Data: []byte(strings.Repeat("n", 50)), Mode: 0o644}
+	res, err := h.uc.Backup(ctx, "daily", backup.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Backup#2(DryRun): %v", err)
+	}
+	if res.PlannedByBudget {
+		t.Error("PlannedByBudget = true; want false (остаток 900 < min_tail 950)")
+	}
+	if res.PlannedParts != 1 {
+		t.Errorf("PlannedParts = %d; want 1 (budget=0 — без деления)", res.PlannedParts)
+	}
+}
+
+// TestBackup_AppendTapeOverCapacity — занято больше capacity:
+// остаток зажимается нулём, без отрицательного бюджета.
+func TestBackup_AppendTapeOverCapacity(t *testing.T) {
+	h := newHarness(t, spanFiles()) // 170 байт при capacity 100
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
+	h.rebuild()
+	ctx := context.Background()
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#1: %v", err)
+	}
+	h.fs.MapFS["etc/hosts"] = &fstest.MapFile{Data: []byte("changed"), Mode: 0o644, ModTime: time.Unix(99, 0)}
+	res, err := h.uc.Backup(ctx, "daily", backup.Options{DryRun: true})
+	if err != nil {
+		t.Fatalf("Backup#2(DryRun): %v", err)
+	}
+	if res.PlannedByBudget {
+		t.Error("PlannedByBudget = true; want false (остаток зажат нулём)")
+	}
+	if res.PlannedParts != 1 {
+		t.Errorf("PlannedParts = %d; want 1", res.PlannedParts)
+	}
+}
+
+// TestBackup_PlannerConfigErrors — ошибки конфига spanning
+// возвращаются до записи.
+func TestBackup_PlannerConfigErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *fakeConfig
+	}{
+		{"capacity read fails", &fakeConfig{jobs: jobsAppend(), capacityErr: errors.New("boom")}},
+		{"negative capacity", &fakeConfig{jobs: jobsAppend(), capacity: -1}},
+		{"min_tail read fails", &fakeConfig{jobs: jobsAppend(), capacity: 1000, minTailErr: errors.New("boom")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{"etc/hosts": "x"})
+			h.cfg = tc.cfg
+			h.rebuild()
+			if _, err := h.uc.Backup(context.Background(), "daily", backup.Options{}); err == nil {
+				t.Fatal("ожидалась ошибка конфига spanning")
+			}
+			if len(h.codec.WroteHeaders) != 0 {
+				t.Error("лента тронута несмотря на ошибку конфига")
+			}
+		})
+	}
+}
+
+// TestBackup_PlannerCatalogError — сбой чтения файлов прошлой сессии
+// для оценки остатка: ошибка до записи (не последняя сессия, чтобы
+// пройти мимо lastSnapshot).
+func TestBackup_PlannerCatalogError(t *testing.T) {
+	h := newHarness(t, map[string]string{"etc/hosts": "x"})
+	ctx := context.Background()
+	res1, err := h.uc.Backup(ctx, "daily", backup.Options{})
+	if err != nil {
+		t.Fatalf("Backup#1: %v", err)
+	}
+	h.fs.MapFS["etc/hosts"] = &fstest.MapFile{Data: []byte("ch"), Mode: 0o644, ModTime: time.Unix(10, 0)}
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#2: %v", err)
+	}
+	boom := errors.New("boom")
+	h.overrideCat = &failCatalogBy{MemCatalog: h.cat, getFiles: boom, getFilesFor: res1.Session.ID}
+	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 1000}
+	h.rebuild()
+	_, err = h.uc.Backup(ctx, "daily", backup.Options{DryRun: true})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Backup#3: %v; want boom (ошибка оценки остатка)", err)
+	}
+	if !strings.Contains(err.Error(), "оценки остатка") {
+		t.Errorf("ошибка %v не из usedBytes", err)
 	}
 }

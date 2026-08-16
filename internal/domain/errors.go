@@ -181,6 +181,28 @@ func (e *AlreadyFormattedError) Is(target error) bool {
 	return ok
 }
 
+// FileTooLargeError — одиночный файл не помещается в бюджет кассеты
+// (остаток при дозаписи или всю ёмкость): разрез сессии идёт только
+// по границам файлов, такой файл записать нельзя. Ловится планировщиком
+// до записи.
+type FileTooLargeError struct {
+	Path     string
+	Size     int64
+	Capacity int64 // бюджет части, в который файл не влезает
+}
+
+// Error реализует интерфейс error.
+func (e *FileTooLargeError) Error() string {
+	return fmt.Sprintf(
+		"файл %s (%d байт) больше бюджета кассеты (%d байт)", e.Path, e.Size, e.Capacity)
+}
+
+// Is поддерживает errors.Is(err, &FileTooLargeError{}).
+func (e *FileTooLargeError) Is(target error) bool {
+	_, ok := target.(*FileTooLargeError)
+	return ok
+}
+
 // EmptyIndexError — пустой индекс сессии при чтении ленты подряд:
 // достигнут конец записанных сессий (EOD) либо повреждена граница.
 type EmptyIndexError struct{}

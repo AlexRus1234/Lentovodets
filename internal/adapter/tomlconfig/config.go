@@ -46,6 +46,8 @@ const (
 	keyWebPasswordHash = "web_password_hash"
 	keyAPIKey          = "api_key"
 	keySessionTTL      = "session_ttl"
+	keyCapacity        = "capacity"
+	keyMinTail         = "min_tail"
 )
 
 // Значения по умолчанию (SPECIFICATION §5, §8).
@@ -124,6 +126,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault(keyBind, defaultBind)
 	v.SetDefault(keyWebUsername, "")
 	v.SetDefault(keySessionTTL, defaultSessionTTL)
+	v.SetDefault(keyCapacity, "")
+	v.SetDefault(keyMinTail, "")
 }
 
 // Device — путь к устройству ленты.
@@ -165,6 +169,48 @@ func (c *Config) SessionTTL() time.Duration {
 		return 72 * time.Hour
 	}
 	return d
+}
+
+// Capacity — оценка ёмкости кассеты в байтах для планировщика частей
+// spanning (ключ capacity, человекочитаемая строка вида "2.2T";
+// человекочитаемые строки разбирает domain.ParseSize). Ключ отсутствует
+// или пуст — 0: spanning выключен, поведение одной кассеты. Битая
+// строка — ошибка.
+func (c *Config) Capacity() (int64, error) {
+	raw := strings.TrimSpace(c.read.GetString(keyCapacity))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := domain.ParseSize(raw)
+	if err != nil {
+		return 0, fmt.Errorf("tomlconfig: ключ capacity: %w", err)
+	}
+	return n, nil
+}
+
+// MinTail — порог остатка текущей кассеты в байтах: остаток ниже
+// порога — новая сессия начинается на новой кассете (ключ min_tail).
+// Явное значение — любая строка domain.ParseSize; дефолт — 5%
+// capacity, но не меньше одного блока ленты (domain.BlockSize);
+// без capacity — 0.
+func (c *Config) MinTail() (int64, error) {
+	raw := strings.TrimSpace(c.read.GetString(keyMinTail))
+	if raw != "" {
+		n, err := domain.ParseSize(raw)
+		if err != nil {
+			return 0, fmt.Errorf("tomlconfig: ключ min_tail: %w", err)
+		}
+		return n, nil
+	}
+	capacity, err := c.Capacity()
+	if err != nil || capacity == 0 {
+		return 0, err
+	}
+	tail := capacity / 20
+	if tail < domain.BlockSize {
+		tail = domain.BlockSize
+	}
+	return tail, nil
 }
 
 // RawTOML — содержимое конфигурационного файла как текст (для

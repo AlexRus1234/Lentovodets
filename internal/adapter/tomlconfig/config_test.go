@@ -41,6 +41,8 @@ web_username = "admin"
 web_password_hash = "$2a$10$secret"
 api_key = "script-key"
 session_ttl = "1h"
+capacity = "2.2T"
+min_tail = "100G"
 
 [[jobs]]
 Name = "media"
@@ -477,6 +479,98 @@ func TestSessionTTL_InvalidFallsBack(t *testing.T) {
 	cfg, _ := newConfig(t, `session_ttl = "очень-долго"`)
 	if got, want := cfg.SessionTTL(), 72*time.Hour; got != want {
 		t.Errorf("SessionTTL = %v, want fallback %v", got, want)
+	}
+}
+
+func TestSpanKeys_ReadTOML(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	capacity, err := cfg.Capacity()
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if capacity != 2418925581107 { // 2.2 * 2^40
+		t.Errorf("Capacity = %d; want 2418925581107", capacity)
+	}
+	tail, err := cfg.MinTail()
+	if err != nil {
+		t.Fatalf("MinTail: %v", err)
+	}
+	if tail != 107374182400 { // 100 * 2^30
+		t.Errorf("MinTail = %d; want 107374182400", tail)
+	}
+}
+
+func TestSpanKeys_DefaultsZero(t *testing.T) {
+	cfg, _ := newConfig(t, "")
+	capacity, err := cfg.Capacity()
+	if capacity != 0 || err != nil {
+		t.Errorf("Capacity = %d, %v; want 0, nil (spanning выключен)", capacity, err)
+	}
+	tail, err := cfg.MinTail()
+	if tail != 0 || err != nil {
+		t.Errorf("MinTail = %d, %v; want 0, nil без capacity", tail, err)
+	}
+}
+
+func TestMinTail_DefaultFivePercent(t *testing.T) {
+	cfg, _ := newConfig(t, `capacity = "1T"`)
+	tail, err := cfg.MinTail()
+	if err != nil {
+		t.Fatalf("MinTail: %v", err)
+	}
+	if tail != 54975581388 { // 5% от 2^40
+		t.Errorf("MinTail = %d; want 54975581388", tail)
+	}
+	// маленькая ёмкость: 5% меньше блока ленты — зажимается блоком
+	small, _ := newConfig(t, `capacity = "1M"`)
+	tail, err = small.MinTail()
+	if err != nil {
+		t.Fatalf("MinTail(1M): %v", err)
+	}
+	if tail != domain.BlockSize {
+		t.Errorf("MinTail(1M) = %d; want domain.BlockSize", tail)
+	}
+}
+
+func TestSpanKeys_EnvAndFlags(t *testing.T) {
+	t.Setenv("LENTOVODEC_CAPACITY", "3G")
+	t.Setenv("LENTOVODEC_MIN_TAIL", "1G")
+	cfg, _ := newConfig(t, validTOML)
+	if capacity, err := cfg.Capacity(); err != nil || capacity != 3221225472 {
+		t.Errorf("Capacity = %d, %v; want 3G из env", capacity, err)
+	}
+	if tail, err := cfg.MinTail(); err != nil || tail != 1073741824 {
+		t.Errorf("MinTail = %d, %v; want 1G из env", tail, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "lentovodec.toml")
+	if err := os.WriteFile(path, []byte(validTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	flagged, err := tomlconfig.New(path, map[string]string{"capacity": "512M"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if capacity, err := flagged.Capacity(); err != nil || capacity != 512<<20 {
+		t.Errorf("Capacity = %d, %v; want 512M из флага", capacity, err)
+	}
+}
+
+func TestSpanKeys_Invalid(t *testing.T) {
+	cfg, _ := newConfig(t, `capacity = "много"`)
+	if _, err := cfg.Capacity(); err == nil {
+		t.Error("Capacity на битой строке = nil, want ошибка")
+	}
+	if _, err := cfg.MinTail(); err == nil {
+		t.Error("MinTail с битым capacity = nil, want ошибка")
+	}
+
+	badTail, _ := newConfig(t, "capacity = \"1G\"\nmin_tail = \"чуть-чуть\"\n")
+	if _, err := badTail.Capacity(); err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if _, err := badTail.MinTail(); err == nil {
+		t.Error("MinTail на битой строке = nil, want ошибка")
 	}
 }
 

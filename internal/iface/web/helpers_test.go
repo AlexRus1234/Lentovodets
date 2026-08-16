@@ -43,6 +43,8 @@ type fakeConfig struct {
 	ttl       time.Duration
 	tomlText  string
 	serverURL string
+	capacity  int64
+	minTail   int64
 }
 
 func newFakeConfig() *fakeConfig {
@@ -67,6 +69,8 @@ func (c *fakeConfig) WebPasswordHash() string     { return c.passHash }
 func (c *fakeConfig) APIKey() string              { return c.apiKey }
 func (c *fakeConfig) SessionTTL() time.Duration   { return c.ttl }
 func (c *fakeConfig) RawTOML() (string, error)    { return c.tomlText, nil }
+func (c *fakeConfig) Capacity() (int64, error)    { return c.capacity, nil }
+func (c *fakeConfig) MinTail() (int64, error)     { return c.minTail, nil }
 
 func (c *fakeConfig) AddJob(job domain.Job) error {
 	if err := job.Validate(); err != nil {

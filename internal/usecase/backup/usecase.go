@@ -51,6 +51,17 @@ type Stats struct {
 type Result struct {
 	Session domain.Session // DryRun: нулевая сессия
 	Stats   Stats
+
+	// PlannedParts — число частей сессии по планировщику spanning
+	// (capacity/min_tail, план «тома»); 1 — одна кассета. Заполняется
+	// и в DryRun. Пока spanning не реализован, части >1 означают
+	// продолжение одной кассетой с ENOSPC-откатом.
+	PlannedParts int
+
+	// PlannedByBudget — часть 1 спланирована в остаток текущей кассеты
+	// (дозапись), а не на полную ёмкость (FULL/первая сессия либо
+	// остаток меньше min_tail — вся сессия на новую кассету).
+	PlannedByBudget bool
 }
 
 // UseCase выполняет бекап задания на ленту.
@@ -94,58 +105,51 @@ func New(
 //     MTFSF(1), сессия 1; старые сессии ленты удаляются из каталога;
 //   - INC: позиционирование MTFSF(2K+1) после K существующих сессий;
 //   - снимок для сравнения — файлы последней сессии ленты;
+//   - после скана сессия режется планировщиком частей по
+//     capacity/min_tail (см. planSpanning); файл больше бюджета
+//     кассеты — FileTooLargeError до записи (и в DryRun);
 //   - после записи сессии ставится замыкающая EOD-пара filemark'ов
 //     (инвариант FORMAT §4: 2K+3 меток на ленте с K сессиями).
 func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Result, error) {
-	job, err := uc.loadJob(jobName)
+	st, err := uc.prepare(ctx, jobName)
 	if err != nil {
 		return Result{}, err
 	}
-	label, err := uc.readLabel(ctx)
-	if err != nil {
-		return Result{}, err
-	}
-	if _, err := uc.cat.GetTapeByUUID(ctx, label.UUID); err != nil {
-		return Result{}, fmt.Errorf(
-			"backup: кассета %s неизвестна каталогу (сначала lentovodec tape format): %w",
-			label.UUID, err)
-	}
-	jobRunID, err := uc.rand.UUID4()
-	if err != nil {
-		return Result{}, fmt.Errorf("backup: генерация job_run_id: %w", err)
-	}
-	sessions, err := uc.cat.ListSessions(ctx, label.UUID)
-	if err != nil {
-		return Result{}, fmt.Errorf("backup: список сессий кассеты %s: %w", label.UUID, err)
-	}
-	lastNum, lastID := lastSession(sessions)
-
-	snapshot, err := uc.lastSnapshot(ctx, lastID)
+	snapshot, err := uc.lastSnapshot(ctx, st.lastID)
 	if err != nil {
 		return Result{}, err
 	}
 	sc := scan.New(uc.fs, uc.hasher, uc.prog, uc.log)
-	files, err := sc.Scan(ctx, job, snapshot)
+	files, err := sc.Scan(ctx, st.job, snapshot)
 	if err != nil {
 		return Result{}, err
 	}
 	stats := statsOf(files)
+
+	plan, err := uc.planSpanning(ctx, st.job.Name, opts, st.lastNum, st.sessions, files)
+	if err != nil {
+		return Result{}, err
+	}
 	if opts.DryRun {
 		uc.done()
-		return Result{Stats: stats}, nil
+		return Result{
+			Stats:           stats,
+			PlannedParts:    len(plan.parts),
+			PlannedByBudget: plan.byBudget,
+		}, nil
 	}
 
-	isFull := opts.Full || lastNum == 0
+	isFull := opts.Full || st.lastNum == 0
 	sess := domain.Session{
-		TapeUUID:  label.UUID,
-		Num:       lastNum + 1,
+		TapeUUID:  st.label.UUID,
+		Num:       st.lastNum + 1,
 		Type:      domain.SessionInc,
 		Timestamp: uc.clock.Now().Unix(),
-		JobRunID:  jobRunID,
+		JobRunID:  st.jobRunID,
 	}
 	if isFull {
 		sess.Num, sess.Type = 1, domain.SessionFull
-		if err := uc.dropSessions(ctx, sessions); err != nil {
+		if err := uc.dropSessions(ctx, st.sessions); err != nil {
 			return Result{}, err
 		}
 	}
@@ -154,7 +158,7 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 		return Result{}, fmt.Errorf("backup: создание сессии: %w", err)
 	}
 
-	if err := uc.writeSession(ctx, job, sess, files, lastNum); err != nil {
+	if err := uc.writeSession(ctx, st.job, sess, files, st.lastNum); err != nil {
 		uc.fail(err)
 		return Result{}, err
 	}
@@ -164,7 +168,7 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 	}
 	uc.done()
 	uc.log.Info("backup finished",
-		slog.String("job", job.Name),
+		slog.String("job", st.job.Name),
 		slog.Int64("session_id", sess.ID),
 		slog.Int("session_num", int(sess.Num)),
 		slog.String("type", string(sess.Type)),
@@ -172,7 +176,144 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 		slog.Int("modified", stats.Modified),
 		slog.Int("deleted", stats.Deleted),
 		slog.Int64("bytes", stats.Bytes))
-	return Result{Session: sess, Stats: stats}, nil
+	return Result{
+		Session:         sess,
+		Stats:           stats,
+		PlannedParts:    len(plan.parts),
+		PlannedByBudget: plan.byBudget,
+	}, nil
+}
+
+// tapeState — состояние кассеты и задания, собранное до скана.
+type tapeState struct {
+	job      domain.Job
+	label    domain.TapeLabel
+	jobRunID string
+	sessions []domain.Session
+	lastNum  int32 // максимальный номер сессии ленты
+	lastID   int64 // PK этой сессии; 0 — сессий нет
+}
+
+// prepare загружает задание, проверяет ярлык и кассету по каталогу,
+// генерирует job_run_id и собирает сессии ленты.
+func (uc *UseCase) prepare(ctx context.Context, jobName string) (tapeState, error) {
+	job, err := uc.loadJob(jobName)
+	if err != nil {
+		return tapeState{}, err
+	}
+	label, err := uc.readLabel(ctx)
+	if err != nil {
+		return tapeState{}, err
+	}
+	if _, err := uc.cat.GetTapeByUUID(ctx, label.UUID); err != nil {
+		return tapeState{}, fmt.Errorf(
+			"backup: кассета %s неизвестна каталогу (сначала lentovodec tape format): %w",
+			label.UUID, err)
+	}
+	jobRunID, err := uc.rand.UUID4()
+	if err != nil {
+		return tapeState{}, fmt.Errorf("backup: генерация job_run_id: %w", err)
+	}
+	sessions, err := uc.cat.ListSessions(ctx, label.UUID)
+	if err != nil {
+		return tapeState{}, fmt.Errorf("backup: список сессий кассеты %s: %w", label.UUID, err)
+	}
+	lastNum, lastID := lastSession(sessions)
+	return tapeState{
+		job:      job,
+		label:    label,
+		jobRunID: jobRunID,
+		sessions: sessions,
+		lastNum:  lastNum,
+		lastID:   lastID,
+	}, nil
+}
+
+// spanPlan — итог планирования сессии по ёмкости кассеты.
+type spanPlan struct {
+	parts    []domain.SpanPart // части в порядке сканера
+	budget   int64             // бюджет части 1; 0 — без деления
+	byBudget bool              // часть 1 спланирована в остаток кассеты
+}
+
+// planSpanning режет сессию на части после скана (план «тома» §2.2).
+// Бюджет части 1: FULL/первая сессия — capacity целиком; дозапись —
+// остаток capacity − Σ байт файлов сессий кассеты из каталога
+// (tombstone'ы не считаются — на ленту не пишутся; индексный overhead
+// не учитывается — оценка). Остаток меньше min_tail — бюджет 0: вся
+// сессия на новую кассету. capacity = 0 — spanning выключен: одна
+// часть без проверки размеров (переполнение ловит ENOSPC-путь записи).
+// Ошибка планировщика (FileTooLargeError и сбой конфига/каталога)
+// возвращается до каких-либо записей.
+func (uc *UseCase) planSpanning(
+	ctx context.Context,
+	jobName string,
+	opts Options,
+	lastNum int32,
+	sessions []domain.Session,
+	files []domain.FileMeta,
+) (spanPlan, error) {
+	capacity, err := uc.cfg.Capacity()
+	if err != nil {
+		return spanPlan{}, fmt.Errorf("backup: чтение capacity: %w", err)
+	}
+	if capacity < 0 {
+		return spanPlan{}, fmt.Errorf("backup: capacity = %d: отрицательная ёмкость", capacity)
+	}
+	var plan spanPlan
+	if capacity > 0 {
+		minTail, err := uc.cfg.MinTail()
+		if err != nil {
+			return spanPlan{}, fmt.Errorf("backup: чтение min_tail: %w", err)
+		}
+		if opts.Full || lastNum == 0 {
+			plan.budget = capacity
+		} else {
+			used, err := uc.usedBytes(ctx, sessions)
+			if err != nil {
+				return spanPlan{}, err
+			}
+			rem := capacity - used
+			if rem < 0 {
+				rem = 0
+			}
+			if rem > 0 && rem >= minTail {
+				plan.budget, plan.byBudget = rem, true
+			}
+		}
+	}
+	plan.parts, err = domain.PlanSpan(files, plan.budget)
+	if err != nil {
+		return spanPlan{}, err
+	}
+	uc.log.Info("backup planned",
+		slog.String("job", jobName),
+		slog.Int("planned_parts", len(plan.parts)),
+		slog.Int64("budget_bytes", plan.budget))
+	if len(plan.parts) > 1 {
+		uc.log.Warn("spanning будет реализован позже: сессия пишется одной кассетой, при переполнении — откат к EOD",
+			slog.Int("planned_parts", len(plan.parts)))
+	}
+	return plan, nil
+}
+
+// usedBytes — Σ байт файлов сессий кассеты из каталога (оценка
+// занятого места для бюджета дозаписи). Tombstone'ы не считаются:
+// на ленту не пишутся.
+func (uc *UseCase) usedBytes(ctx context.Context, sessions []domain.Session) (int64, error) {
+	var used int64
+	for _, sess := range sessions {
+		files, err := uc.cat.GetFilesBySession(ctx, sess.ID)
+		if err != nil {
+			return 0, fmt.Errorf("backup: файлы сессии %d для оценки остатка кассеты: %w", sess.ID, err)
+		}
+		for _, fm := range files {
+			if !fm.IsDeleted() {
+				used += fm.Size
+			}
+		}
+	}
+	return used, nil
 }
 
 // loadJob ищет задание по имени в конфигурации.

@@ -25,6 +25,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ## [Unreleased]
 
+### Added
+
+- Конфиг `capacity`/`min_tail` (TOML/env): оценка ёмкости кассеты и
+  порог остатка для планировщика частей. При заданном `capacity` файл
+  больше кассеты (или её остатка) — честная ошибка после скана, до
+  записи на ленту; в логе `backup planned` — `planned_parts` и
+  `budget_bytes`. Сама нарезка сессий на несколько кассет (spanning) —
+  в разработке; поведение одной кассеты не меняется.
+
 ### Fixed
 
 - Статистика бекапа (`Stats.Bytes`) больше не включает Lstat-размеры

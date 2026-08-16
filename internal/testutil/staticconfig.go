@@ -26,6 +26,11 @@ import "lentovodec/internal/domain"
 // StaticConfig отдаёт предзагруженные задания.
 type StaticConfig struct {
 	JobList []domain.Job
+
+	// CapacityBytes/MinTailBytes — параметры планировщика spanning
+	// (port.ConfigSource.Capacity/MinTail); нули — spanning выключен.
+	CapacityBytes int64
+	MinTailBytes  int64
 }
 
 // Jobs возвращает предзагруженный список заданий.
@@ -45,3 +50,9 @@ func (c *StaticConfig) Server() string { return "" }
 
 // LogLevel — уровень логирования.
 func (c *StaticConfig) LogLevel() string { return "info" }
+
+// Capacity — ёмкость кассеты для планировщика spanning (0 — выключен).
+func (c *StaticConfig) Capacity() (int64, error) { return c.CapacityBytes, nil }
+
+// MinTail — порог остатка кассеты (0 — дефолт планировщика).
+func (c *StaticConfig) MinTail() (int64, error) { return c.MinTailBytes, nil }

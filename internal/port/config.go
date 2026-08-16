@@ -41,6 +41,18 @@ type ConfigSource interface {
 
 	// LogLevel — уровень логирования: debug|info|warn|error.
 	LogLevel() string
+
+	// Capacity — оценка ёмкости кассеты в байтах для планировщика
+	// частей spanning (ключ capacity, человекочитаемая строка вида
+	// "2.2T"). 0 — spanning выключен, поведение одной кассеты.
+	// Ошибка — ключ задан, но не разбирается.
+	Capacity() (int64, error)
+
+	// MinTail — порог остатка текущей кассеты в байтах: остаток ниже
+	// порога — новая сессия начинается на новой кассете (ключ min_tail).
+	// Дефолт — 5% capacity, но не меньше domain.BlockSize; без
+	// capacity — 0.
+	MinTail() (int64, error)
 }
 
 // ConfigEditor — изменение конфигурации: запись заданий обратно
