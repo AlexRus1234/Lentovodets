@@ -220,7 +220,7 @@ func TestNewServer_LANBindWithoutAuth_Refused(t *testing.T) {
 		cfg.username = tc.user
 		cfg.passHash = tc.hash
 		_, err := web.NewServer(web.Deps{
-			Config:  cfg,
+			Config:   cfg,
 			OpenTape: func(string) (port.Tape, error) { return nil, nil },
 		})
 		if tc.wantErr && err == nil {

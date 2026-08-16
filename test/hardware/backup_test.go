@@ -111,8 +111,8 @@ func TestHardware_FormatBackupRestoreFull(t *testing.T) {
 		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 	)
 	cfg := &testutil.StaticConfig{JobList: []domain.Job{{
-		Name: "hw",
-		Mode: domain.ModeAppend,
+		Name:  "hw",
+		Mode:  domain.ModeAppend,
 		Paths: []string{src},
 	}}}
 	cat, err := sqlite.New(filepath.Join(base, "catalog.db"))

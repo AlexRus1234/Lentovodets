@@ -206,7 +206,7 @@ func TestCatalog_Endpoints(t *testing.T) {
 		t.Fatalf("sessions все: %d %q", code, body)
 	}
 
-	code, body = do(t, env, http.MethodGet, "/api/catalog/sessions/999/files", "")
+	code, _ = do(t, env, http.MethodGet, "/api/catalog/sessions/999/files", "")
 	if code != http.StatusNotFound {
 		t.Fatalf("files нет сессии: %d, want 404", code)
 	}
@@ -215,7 +215,7 @@ func TestCatalog_Endpoints(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "/data/a.txt") {
 		t.Fatalf("files: %d %q", code, body)
 	}
-	code, body = do(t, env, http.MethodGet, "/api/catalog/sessions/abc/files", "")
+	code, _ = do(t, env, http.MethodGet, "/api/catalog/sessions/abc/files", "")
 	if code != http.StatusBadRequest {
 		t.Fatalf("files битый id: %d, want 400", code)
 	}

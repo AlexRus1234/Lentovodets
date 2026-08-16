@@ -91,6 +91,7 @@ issues:
         - gocyclo
         - errcheck
         - gosec
+        - unparam
     - path: cmd/lentovodec/main\.go
       linters:
         - revive

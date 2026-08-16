@@ -80,7 +80,7 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer closeTape(s, tape)
-		fs := port.Filesystem(s.deps.FS)
+		fs := s.deps.FS
 		if dest != "" {
 			fs = destfs.Wrap(s.deps.FS, dest)
 		}

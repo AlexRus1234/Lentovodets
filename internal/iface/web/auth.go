@@ -4,6 +4,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -205,7 +206,7 @@ func (a *authManager) audit(event, ip, username, reason string) {
 	if reason != "" {
 		attrs = append(attrs, slog.String("reason", reason))
 	}
-	a.log.LogAttrs(nil, slog.LevelInfo, event, attrs...)
+	a.log.LogAttrs(context.TODO(), slog.LevelInfo, event, attrs...)
 }
 
 // randomToken генерирует токен сессии: 256 бит из crypto/rand в hex.

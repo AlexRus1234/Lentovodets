@@ -132,8 +132,8 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(s.requestLogger)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/status", s.handleStatus)           // без аутентификации
-		r.Post("/auth/login", s.handleLogin)       // без аутентификации
+		r.Get("/status", s.handleStatus)     // без аутентификации
+		r.Post("/auth/login", s.handleLogin) // без аутентификации
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 			r.Post("/auth/logout", s.handleLogout)
