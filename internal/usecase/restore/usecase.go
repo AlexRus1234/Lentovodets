@@ -55,6 +55,11 @@ func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 	if _, err := uc.readLabel(ctx); err != nil {
 		return Stats{}, err
 	}
+	// Позиция — на filemark'е ярлыка; переводим на индекс сессии 1
+	// (FORMAT §9: чтение сессий подряд начинается после файла ярлыка).
+	if err := uc.tape.ForwardFilemarks(ctx, 1); err != nil {
+		return Stats{}, fmt.Errorf("restore full: пропуск ярлыка: %w", err)
+	}
 	var total Stats
 	for {
 		if err := ctx.Err(); err != nil {

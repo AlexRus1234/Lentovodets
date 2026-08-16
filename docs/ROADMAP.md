@@ -449,18 +449,60 @@ round-trip (записали — прочитали — сравнили); golde
 
 ---
 
-## Этап 7 — iface/cli, iface/web, cmd/lentovodec
+## Этап 7 — iface/cli, iface/web, cmd/lentovodec — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-16).
+> `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...`, `go test -race ./...` зелёные; покрытие:
+> cli **75.1%**, web **82.7%**, destfs (новый пакет) **86.7%** (цель
+> 60–80%). Зафиксированные решения (в рамках свободы impl.):
+> - CLI: команды по таблице SPEC §5, одна группа — один файл; тесты
+>   через `Execute(args, Deps)` с подменой всех зависимостей
+>   (fake-лента/каталог/кодек, реальный tomlconfig в t.TempDir);
+> - `HTTPClient` (iface/cli/client.go) — авторизация лестницей:
+>   X-API-Key из TOML, при 401 — интерактивный логин и Bearer-токен;
+> - Web: `ServerConfig` — расширение port.ConfigSource в самом web
+>   (bind/web-ключи/RawTOML), реализует его tomlconfig; отдельный
+>   интерфейс, чтобы не ломать чужие реализации порта;
+> - аутентификация: bcrypt (subtle-сравнение имени), сессии 256 бит
+>   из crypto/rand в in-memory map с TTL и лимитом 1024, rate-limit
+>   5/30с на IP (скользящее окно, сброс при успехе), api_key —
+>   sha256+subtle; отказ старта при не-loopback bind без пароля
+>   (в т.ч. при override флагами --bind/--port);
+> - TaskRegistry: `StartIfIdle` — атомарная проверка «активная задача
+>   есть» (стример один); прогресс-репортёр задачи троттлит строки
+>   лога до 2 Гц, скорость — экспоненциальное сглаживание; graceful
+>   shutdown: HTTP Shutdown 5с + WaitAll задач 30с;
+> - лента в daemon открывается на время операции (probe в
+>   GET /api/status = open+close), device меняется POST /api/settings
+>   (409 при активной задаче);
+> - restore в dest: декоратор `iface/destfs.Wrap` — usecase про dest
+>   не знает, пишется по путям индекса;
+> - `embed.FS` с плейсхолдером index.html до Этапа 8 (make clean
+>   восстанавливает плейсхолдер); единственное package-level var
+>   помимо cmd/lentovodec.Version (зафиксировано как исключение);
+> - выбор ленты в wire: `wire_device_filetape.go` (всегда filetape,
+>   /dev/* не создаётся молча) / `wire_device_linux.go` (tape-тег:
+>   char-устройство → linuxtape, прочее → filetape); EACCES/ENOENT →
+>   подсказка `usermod -aG tape` (rootless-модель SPEC §9.1);
+> - `sloglog.New(level, w)` — фабрика логгера (Этап 4 её не завёл);
+> - **исправлен баг Этапа 6**, найденный e2e-тестом с настоящим
+>   кодеком: `Restore.Full` и `ReadTest` не пропускали filemark ярлыка
+>   перед чтением сессий подряд (FORMAT §9) — с FakeCodec это
+>   маскировалось; добавлен MTFSF(1) после чтения ярлыка;
+> - CLI `passwd` читает пароль из stdin дважды (без подавления эха —
+>   терминальные обёртки не входят в закреплённые зависимости).
 
 **Файлы:**
 - `internal/iface/cli/` — cobra-команды по таблице из
   [SPECIFICATION §5](SPECIFICATION.md#5-cli). Одна команда — один файл.
   Команды `daemon`-режима используют `client.HTTPClient`.
 - `internal/iface/cli/wire.go` — сборка use case и адаптеров в main.
-- Probe доступа к устройству на старте local-команд и демона
+  Probe доступа к устройству на старте local-команд и демона
   (rootless-модель, [SPECIFICATION §9.1](SPECIFICATION.md#91-rootless-модель)):
   при EACCES/ENOENT — понятная ошибка с подсказкой (`usermod -aG tape`),
   без проверки uid.
-- `internal/iface/web/router.go` — chi-роутер со всеми эндпоинтами из
+- `internal/iface/web/server.go` — chi-роутер со всеми эндпоинтами из
   [SPECIFICATION §6](SPECIFICATION.md#6-rest-api).
 - `internal/iface/web/auth.go` — аутентификация по SPEC §6.0/§9.2:
   bcrypt-проверка логина, in-memory сессии (crypto/rand, TTL), middleware
@@ -472,8 +514,7 @@ round-trip (записали — прочитали — сравнили); golde
 - `internal/iface/web/taskregistry.go` — in-memory `map[TaskID]*Task` с
   мьютексом; фоновые goroutine для backup/restore.
 - `internal/iface/web/embed.go` — `//go:embed assets/*` (бандл из Этапа 8).
-- `internal/iface/web/client.go` — HTTP-клиент для CLI-команд daemon-режима
-  (может лежать в `internal/iface/cli/client.go`).
+- `internal/iface/cli/client.go` — HTTP-клиент для CLI-команд daemon-режима.
 - `cmd/lentovodec/main.go` — `package main`, ~50 строк, только вызов
   `cli.Execute()` после парсинга флагов.
 

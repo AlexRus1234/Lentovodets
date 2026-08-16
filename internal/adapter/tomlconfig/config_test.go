@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lentovodec/internal/adapter/tomlconfig"
 	"lentovodec/internal/domain"
@@ -19,7 +20,11 @@ device = "/dev/nst1"
 log   = "/var/log/lentovodec.log"
 server = "http://192.168.1.10:29201"
 log_level = "debug"
+bind = "192.168.1.10:29201"
+web_username = "admin"
 web_password_hash = "$2a$10$secret"
+api_key = "script-key"
+session_ttl = "1h"
 
 [[jobs]]
 Name = "media"
@@ -419,5 +424,82 @@ func TestAddJob_WriteFailure(t *testing.T) {
 	}
 	if len(jobs) != 0 {
 		t.Errorf("после сбоя записи jobs len = %d, want 0 (память консистентна диску)", len(jobs))
+	}
+}
+
+func TestWebKeys_ReadAndDefaults(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	if cfg.Bind() != "192.168.1.10:29201" {
+		t.Errorf("Bind = %q, want 192.168.1.10:29201", cfg.Bind())
+	}
+	if cfg.WebUsername() != "admin" {
+		t.Errorf("WebUsername = %q, want admin", cfg.WebUsername())
+	}
+	if cfg.WebPasswordHash() != "$2a$10$secret" {
+		t.Errorf("WebPasswordHash = %q, want $2a$10$secret", cfg.WebPasswordHash())
+	}
+	if cfg.APIKey() != "script-key" {
+		t.Errorf("APIKey = %q, want script-key", cfg.APIKey())
+	}
+	if got, want := cfg.SessionTTL(), time.Hour; got != want {
+		t.Errorf("SessionTTL = %v, want %v", got, want)
+	}
+
+	def, _ := newConfig(t, "")
+	if def.Bind() != "127.0.0.1:29201" {
+		t.Errorf("Bind default = %q, want 127.0.0.1:29201", def.Bind())
+	}
+	if def.WebUsername() != "" || def.WebPasswordHash() != "" || def.APIKey() != "" {
+		t.Error("секретные ключи без файла должны быть пустыми")
+	}
+	if got, want := def.SessionTTL(), 72*time.Hour; got != want {
+		t.Errorf("SessionTTL default = %v, want %v", got, want)
+	}
+}
+
+func TestSessionTTL_InvalidFallsBack(t *testing.T) {
+	cfg, _ := newConfig(t, `session_ttl = "очень-долго"`)
+	if got, want := cfg.SessionTTL(), 72*time.Hour; got != want {
+		t.Errorf("SessionTTL = %v, want fallback %v", got, want)
+	}
+}
+
+func TestSecrets_EnvDoesNotLeak(t *testing.T) {
+	// SPECIFICATION §8: секреты через env не передаются — env-переменные
+	// не должны ни перекрыть TOML, ни создать значение из ничего.
+	t.Setenv("LENTOVODEC_API_KEY", "env-key")
+	t.Setenv("LENTOVODEC_WEB_PASSWORD_HASH", "env-hash")
+
+	cfg, _ := newConfig(t, validTOML)
+	if cfg.APIKey() != "script-key" {
+		t.Errorf("APIKey = %q, want из файла (env проигнорирован)", cfg.APIKey())
+	}
+	if cfg.WebPasswordHash() != "$2a$10$secret" {
+		t.Errorf("WebPasswordHash = %q, want из файла", cfg.WebPasswordHash())
+	}
+
+	empty, _ := newConfig(t, "")
+	if empty.APIKey() != "" || empty.WebPasswordHash() != "" {
+		t.Error("env не должен создавать секреты там, где файла нет")
+	}
+}
+
+func TestRawTOML(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	raw, err := cfg.RawTOML()
+	if err != nil {
+		t.Fatalf("RawTOML: %v", err)
+	}
+	if !strings.Contains(raw, `device = "/dev/nst1"`) {
+		t.Errorf("RawTOML не содержит device:\n%s", raw)
+	}
+
+	cfgMissing, _ := newConfig(t, "")
+	raw, err = cfgMissing.RawTOML()
+	if err != nil {
+		t.Fatalf("RawTOML без файла: %v", err)
+	}
+	if raw != "" {
+		t.Errorf("RawTOML без файла = %q, want пусто", raw)
 	}
 }

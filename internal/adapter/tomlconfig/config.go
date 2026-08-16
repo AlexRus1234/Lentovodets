@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
@@ -17,21 +19,28 @@ import (
 // Ключи конфигурации. Регистр не важен при чтении (viper insensitive);
 // env-переменная для ключа k — LENTOVODEC_<K в верхнем регистре>.
 const (
-	keyDevice   = "device"
-	keyDB       = "db"
-	keyLog      = "log"
-	keyServer   = "server"
-	keyLogLevel = "log_level"
-	keyJobs     = "jobs"
+	keyDevice          = "device"
+	keyDB              = "db"
+	keyLog             = "log"
+	keyServer          = "server"
+	keyLogLevel        = "log_level"
+	keyJobs            = "jobs"
+	keyBind            = "bind"
+	keyWebUsername     = "web_username"
+	keyWebPasswordHash = "web_password_hash"
+	keyAPIKey          = "api_key"
+	keySessionTTL      = "session_ttl"
 )
 
 // Значения по умолчанию (SPECIFICATION §5, §8).
 const (
-	defaultDevice   = "/dev/nst0"
-	defaultDB       = "lentovodec.db"
-	defaultLog      = "lentovodec.log"
-	defaultServer   = "http://127.0.0.1:29201"
-	defaultLogLevel = "info"
+	defaultDevice     = "/dev/nst0"
+	defaultDB         = "lentovodec.db"
+	defaultLog        = "lentovodec.log"
+	defaultServer     = "http://127.0.0.1:29201"
+	defaultLogLevel   = "info"
+	defaultBind       = "127.0.0.1:29201"
+	defaultSessionTTL = "72h"
 )
 
 // Config реализует port.ConfigSource (чтение) и port.ConfigEditor
@@ -96,6 +105,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault(keyLog, defaultLog)
 	v.SetDefault(keyServer, defaultServer)
 	v.SetDefault(keyLogLevel, defaultLogLevel)
+	v.SetDefault(keyBind, defaultBind)
+	v.SetDefault(keyWebUsername, "")
+	v.SetDefault(keySessionTTL, defaultSessionTTL)
 }
 
 // Device — путь к устройству ленты.
@@ -112,6 +124,45 @@ func (c *Config) Server() string { return c.read.GetString(keyServer) }
 
 // LogLevel — уровень логирования: debug|info|warn|error.
 func (c *Config) LogLevel() string { return c.read.GetString(keyLogLevel) }
+
+// Bind — адрес, на котором слушает демон (SPECIFICATION §8, §9.2).
+func (c *Config) Bind() string { return c.read.GetString(keyBind) }
+
+// WebUsername — единственная учётка демона; "" — аутентификация
+// выключена (разрешено только при bind на loopback).
+func (c *Config) WebUsername() string { return c.read.GetString(keyWebUsername) }
+
+// WebPasswordHash — bcrypt-хеш пароля демона. Читается только из TOML
+// (file-viper без env-слоя): секреты через env не передаются
+// (SPECIFICATION §8).
+func (c *Config) WebPasswordHash() string { return c.file.GetString(keyWebPasswordHash) }
+
+// APIKey — ключ для скриптов (X-API-Key); "" — отключён. Как и пароль,
+// только из TOML (SPECIFICATION §8).
+func (c *Config) APIKey() string { return c.file.GetString(keyAPIKey) }
+
+// SessionTTL — время жизни сессий логина; некорректное значение
+// молча заменяется на дефолт 72h.
+func (c *Config) SessionTTL() time.Duration {
+	d, err := time.ParseDuration(c.read.GetString(keySessionTTL))
+	if err != nil || d <= 0 {
+		return 72 * time.Hour
+	}
+	return d
+}
+
+// RawTOML — содержимое конфигурационного файла как текст (для
+// GET /api/config). Отсутствующий файл — пустая строка без ошибки.
+func (c *Config) RawTOML() (string, error) {
+	raw, err := os.ReadFile(c.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("tomlconfig: чтение %s: %w", c.path, err)
+	}
+	return string(raw), nil
+}
 
 // Jobs — задания бекапа из секции [[jobs]].
 func (c *Config) Jobs() ([]domain.Job, error) {

@@ -17,11 +17,32 @@
 `Этап 4 — adapter/osfs, sqlite, tomlconfig` (реальная ФС, каталог
 SQLite, конфиг TOML с записью заданий; покрытие ≥93% на пакет),
 `Этап 5 — adapter/filetape, linuxtape` (лента-как-файл с персистентностью
-и ioctls драйвера st; покрытие filetape 96.3%) и `Этап 6 — Use cases`
+и ioctls драйвера st; покрытие filetape 96.3%), `Этап 6 — Use cases`
 (Scanner, Backup, Restore Full/Selective/Smart, FormatTape, Catalog;
-покрытие 95.2–100% на пакет; новые порты `TapeCodec`/`Hasher`).
-Следующий — `Этап 7 — iface/cli, iface/web, cmd/lentovodec`.
+покрытие 95.2–100% на пакет; новые порты `TapeCodec`/`Hasher`) и
+`Этап 7 — iface/cli, iface/web, cmd/lentovodec` (полный CLI: local- и
+daemon-команды, `passwd`; REST API демона на chi с bcrypt-аутентификацией,
+сессиями, rate-limit и реестром фоновых задач; Web-раздача из embed.FS;
+покрытие cli 75%, web 83%).
+Следующий — `Этап 8 — Web UI (Vue 3 + Vite)`.
 См. [ROADMAP](docs/ROADMAP.md).
+
+## Быстрый старт (CLI)
+
+```bash
+make build                        # бинарь bin/lentovodec
+./bin/lentovodec jobs add media --paths /tank/data --mode mirror
+./bin/lentovodec passwd           # bcrypt-хеш → web_password_hash в TOML
+./bin/lentovodec tape format LTO-001
+./bin/lentovodec backup media
+./bin/lentovodec restore --paths /tank/data/a.txt --dest /safe
+./bin/lentovodec daemon           # REST API + Web UI на 127.0.0.1:29201
+```
+
+Команды `catalog *`, `tape info/eject` работают через демона
+(`--server`, по умолчанию `http://127.0.0.1:29201`); авторизация —
+`api_key` из TOML либо логин/пароль. Остальные команды — прямой доступ
+к ленте (rootless, группа `tape`; детали — SPEC §9.1).
 
 ## Документация (канон)
 

@@ -54,6 +54,8 @@ web-dev:
 
 .PHONY: clean
 clean:
-	"$(GO)" clean
+	$(GO) clean
 	rm -rf bin coverage dist
 	rm -rf internal/iface/web/assets
+	mkdir -p internal/iface/web/assets
+	printf '<!doctype html>\n<html lang="ru"><head><meta charset="utf-8"><title>lentovodec</title></head><body><p>Web UI не собран. Выполните <code>make web-build</code> (Этап 8) и перезапустите демона.</p></body></html>\n' > internal/iface/web/assets/index.html
