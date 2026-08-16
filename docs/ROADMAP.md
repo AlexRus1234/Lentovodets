@@ -532,7 +532,40 @@ round-trip (записали — прочитали — сравнили); golde
 
 ---
 
-## Этап 8 — Web UI (Vue 3 + Vite)
+## Этап 8 — Web UI (Vue 3 + Vite) — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-16).
+> `make web-build` зелёный (`vue-tsc --noEmit` + `vite build`, Vite 7);
+> бинарь `lentovodec daemon` раздаёт бандл (SPA-fallback, верные
+> content-type); e2e-сценарий против реального демона с filetape
+> прогнан: format → add job → backup task → поллинг прогресса →
+> sessions → files → smart restore в dest. Зафиксированные решения
+> (в рамках свободы impl.):
+> - зависимости: `vue` 3.5, `vite` 7, `@vitejs/plugin-vue` 6,
+>   `typescript` 5.9, `vue-tsc` 3. Router/pinia/vue-i18n не
+>   добавлялись: пять экранов — табы в `App.vue`, i18n — два словаря в
+>   `i18n.ts` с подстановкой `{параметров}`;
+> - сверх списка файлов добавлены `src/task.ts` (общее состояние фоновой
+>   задачи), `src/format.ts` (байты/даты), `src/vite-env.d.ts` и
+>   `components/TaskProgress.vue` — панель прогресса общая для
+>   Jobs (backup) и Files (restore), живёт в App;
+> - прогресс — поллинг `GET /api/tasks/{id}/progress` раз в секунду
+>   (WebSocket/SSE нет, SPEC §9.2); терминальное состояние — панель
+>   остаётся до закрытия;
+> - 401 от любого запроса → экран логина (событие из `api.ts`), токен и
+>   язык — `localStorage`;
+> - редактирование задания = remove+add: API умеет только
+>   `POST /jobs` и `DELETE /jobs/{name}`;
+> - выбор каталога в Files разворачивается в список файлов клиентски
+>   (smart-restore ищет копии по точным путям, `usecase/restore`);
+>   tombstone (`state=D`) невосстановимы — чекбоксов нет; «оригинальные
+>   пути» — с подтверждающим диалогом (перезапись);
+> - пустые каталоги показываются по явным записям сессии (у них нет
+>   файлов-потомков, из путей не выводятся);
+> - бандл и `web/node_modules/` в git не попадают (`.gitignore`),
+>   `web/package-lock.json` коммитится: fresh clone требует
+>   `make web-build` (Node 22+) перед `make build`; CI Этапа 10
+>   собирает UI перед бинарем.
 
 **Файлы:**
 - `web/package.json`, `web/vite.config.ts` (build →
@@ -554,10 +587,12 @@ cd web && npm run build
 В прод-режиме embed подхватывает это; в dev-режиме — `npm run dev` с
 прокси на `:29201`.
 
-**Тесты:** smoke — открыть демо-страницу руками; автотестов пока нет.
+**Тесты:** smoke — открыть демо-страницу руками; автотестов пока нет
+(статическая раздача покрыта `TestStatic_ServesIndex` из Этапа 7;
+e2e-сценарий API прогнан вручную — см. выше).
 
 **Готовность:** `make web-build` зелёный; бинарь `lentovodec daemon`
-раздаёт UI.
+раздаёт UI. ✅
 
 ---
 

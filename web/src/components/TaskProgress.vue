@@ -1,0 +1,154 @@
+<script setup lang="ts">
+// Панель прогресса фоновой задачи (SPEC §7): полоса %, скорость,
+// текущий файл, бегущий лог. Поллит GET /api/tasks/{id}/progress,
+// пока задача не завершится (WebSocket/SSE нет — SPEC §9.2).
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { getTaskProgress, type TaskProgress as TaskData } from '../api'
+import { currentTask, clearTask } from '../task'
+import { useI18n } from '../i18n'
+import { fmtBytes } from '../format'
+
+const { t } = useI18n()
+
+const data = ref<TaskData | null>(null)
+const pollError = ref('')
+let timer: number | undefined
+
+async function poll(): Promise<void> {
+  const task = currentTask.value
+  if (!task) return
+  try {
+    data.value = await getTaskProgress(task.id)
+    pollError.value = ''
+  } catch (e) {
+    pollError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function restart(): void {
+  if (timer !== undefined) window.clearInterval(timer)
+  data.value = null
+  pollError.value = ''
+  if (currentTask.value) {
+    void poll()
+    timer = window.setInterval(() => {
+      if (!currentTask.value) return
+      if (data.value && data.value.state !== 'running') return
+      void poll()
+    }, 1000)
+  }
+}
+
+watch(() => currentTask.value?.id, () => restart())
+onBeforeUnmount(() => {
+  if (timer !== undefined) window.clearInterval(timer)
+})
+restart()
+
+const percent = computed(() => {
+  if (!data.value) return 0
+  const p = data.value.percent
+  return p >= 0 && p <= 100 ? p : 0
+})
+
+const stateClass = computed(() => data.value?.state ?? 'running')
+
+function close(): void {
+  if (timer !== undefined) window.clearInterval(timer)
+  clearTask()
+}
+</script>
+
+<template>
+  <div v-if="currentTask" class="task-panel" :data-state="stateClass">
+    <div class="head">
+      <strong>
+        {{ currentTask.kind === 'backup' ? t('task.backup') : t('task.restore') }}
+        — {{ currentTask.title }}
+      </strong>
+      <button @click="close">{{ t('close') }}</button>
+    </div>
+    <template v-if="data">
+      <div class="status-line">
+        <span class="state">{{ data.state }}</span>
+        <span>{{ t('task.phase') }}: {{ data.phase || '—' }}</span>
+        <span>{{ percent.toFixed(1) }}%</span>
+        <span>{{ fmtBytes(data.processed_bytes) }} / {{ fmtBytes(data.total_bytes) }}</span>
+        <span>{{ t('task.speed') }}: {{ data.speed_mbps.toFixed(1) }} MiB/s</span>
+      </div>
+      <div class="bar"><div class="fill" :style="{ width: `${percent}%` }" /></div>
+      <p class="mono current" :title="data.current_file">
+        {{ t('task.currentFile') }}: {{ data.current_file || '—' }}
+      </p>
+      <p v-if="data.state === 'success'" class="note">{{ t('task.success') }}</p>
+      <p v-else-if="data.state === 'error'" class="error">{{ t('task.failure') }}: {{ data.error }}</p>
+      <details>
+        <summary>{{ t('task.logs') }}</summary>
+        <pre class="logs">{{ data.logs.join('\n') }}</pre>
+      </details>
+    </template>
+    <p v-else-if="pollError" class="error">{{ pollError }}</p>
+  </div>
+</template>
+
+<style scoped>
+.task-panel {
+  position: fixed;
+  right: 1rem;
+  bottom: 3rem;
+  width: min(34rem, calc(100vw - 2rem));
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 50%);
+  z-index: 100;
+}
+.task-panel[data-state='success'] {
+  border-color: var(--ok);
+}
+.task-panel[data-state='error'] {
+  border-color: var(--danger);
+}
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.state {
+  text-transform: uppercase;
+}
+.bar {
+  height: 0.5rem;
+  background: var(--inset);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s linear;
+}
+.current {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.logs {
+  max-height: 8rem;
+  overflow: auto;
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+}
+</style>
