@@ -596,22 +596,57 @@ e2e-сценарий API прогнан вручную — см. выше).
 
 ---
 
-## Этап 9 — Интеграционные и hardware-тесты
+## Этап 9 — Интеграционные и hardware-тесты — ЗАВЕРШЁН
+
+> **Статус: завершён** (2026-08-16).
+> `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...`, `go test -race ./...`,
+> `go test ./test/integration/... -count=5` зелёные; кросс-сборка
+> `GOOS=linux go vet -tags=tape ./test/hardware/...` проходит.
+> Hardware-сценарий на реальном стримере не прогонялся (привода под
+> рукой нет) — запуск вручную по инструкции в шапке файла.
+> Зафиксированные решения (в рамках свободы impl.):
+> - общий харнесс `test/integration/harness_test.go`: реальные
+>   адаптеры (filetape + osfs + sqlite + tapeformat + xxhash) и
+>   реальные use case'ы; фейки не используются вовсе;
+> - «извлечение кассеты» = закрытие и повторное открытие ленты и
+>   каталога (`reopen`): лента встаёт в BOT, sqlite перечитывается с
+>   диска — заодно проверяется персистентность каталога;
+> - восстановление — через `iface/destfs.Wrap` (как CLI `restore
+>   --dest`), дерево сравнивается побайтово относительно корня
+>   источника (пути в индексе — исходные, с именем тома на Windows);
+> - повреждение копии для smart-fallback — порча одного байта
+>   tar-payload в файле-ленте (framing не трогается, хеш не
+>   сходится) — `corruptNeedle`;
+> - каталоги с изменившимся mtime попадают в сессию как Modified
+>   недетерминированно (Windows обновляет mtime каталогов лениво) —
+>   assertions в тестах ограничены детерминированной частью;
+> - новые testutil-двойники: `StepClock` (строго растущие метки
+>   времени — порядок копий «новые сверху») и `StaticConfig`
+>   (port.ConfigSource с фиксированными заданиями), см.
+>   docs/TESTING.md §3.5–3.6;
+> - hardware: `test/hardware/backup_test.go` (`tape && linux`) —
+>   сквозной сценарий format → backup → readtest → restore full с
+>   побайтовым сравнением; повторное форматирование уже размеченной
+>   ленты — через env `LENTOVODEC_TAPE_REFORMAT=1`.
 
 **Файлы:**
 - `test/integration/backup_restore_test.go` — сценарий «format → backup →
   eject-simulated → read label → restore full → сравнить дерево файлов»
-  через `filetape` + `osfs` + `sqlite`.
+  через `filetape` + `osfs` + `sqlite`; вторая сессия (INC) после правок,
+  поиск по каталогу, selective-restore из сессии 1.
 - `test/integration/mirror_test.go` — сценарий с mirror-режимом: создание,
-  изменение, удаление файлов, проверка состояния после восстановления.
+  изменение, удаление файлов, проверка состояния после восстановления
+  (tombstone удаляет файл из dest).
 - `test/integration/smart_restore_test.go` — multiple copies, повреждённая
-  копия, fallback.
-- `test/hardware/*.go` — `//go:build tape`, прогон на реальном стримере.
+  копия (порча байта на ленте), fallback, NoHealthyCopyError.
+- `test/hardware/*.go` — `//go:build tape`, прогон на реальном стримере:
+  сырые операции ленты (Этап 5) + сквозной сценарий с use case'ами.
 
 **Тесты:** это сами тесты.
 
 **Готовность:** `go test ./test/integration/...` зелёный; hardware — по
-возможности.
+возможности. ✅
 
 ---
 

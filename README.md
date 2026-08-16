@@ -23,10 +23,15 @@ SQLite, конфиг TOML с записью заданий; покрытие ≥
 `Этап 7 — iface/cli, iface/web, cmd/lentovodec` (полный CLI: local- и
 daemon-команды, `passwd`; REST API демона на chi с bcrypt-аутентификацией,
 сессиями, rate-limit и реестром фоновых задач; Web-раздача из embed.FS;
-покрытие cli 75%, web 83%) и `Этап 8 — Web UI (Vue 3 + Vite)` (пять
+покрытие cli 75%, web 83%), `Этап 8 — Web UI (Vue 3 + Vite)` (пять
 экранов: Login/Tape/Jobs/Catalog/Files; ru/en без внешних i18n-библиотек;
-прогресс задач — поллинг 1 Гц; бандл embed'ится в бинарь).
-Следующий — `Этап 9 — Интеграционные и hardware-тесты`.
+прогресс задач — поллинг 1 Гц; бандл embed'ится в бинарь) и
+`Этап 9 — Интеграционные и hardware-тесты` (сквозные сценарии на
+реальных адаптерах filetape+osfs+sqlite: format→backup→eject-сим→restore
+full с побайтовым сравнением дерева, mirror с tombstone'ами, smart
+restore с fallback на старую копию при порче байта на ленте;
++ hardware-сценарий для реального стримера под тегом `tape`).
+Следующий — `Этап 10 — CI, README, финал`.
 См. [ROADMAP](docs/ROADMAP.md).
 
 ## Быстрый старт (CLI)

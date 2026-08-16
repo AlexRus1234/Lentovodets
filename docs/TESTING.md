@@ -99,16 +99,26 @@ type NoProgress struct{}
 func (NoProgress) Report(_ port.ProgressEvent) {}
 ```
 
-### 3.5. `FixedClock` / `FixedRand`
+### 3.5. `FixedClock` / `StepClock` / `FixedRand`
 
 ```go
 clock := testutil.FixedClock(time.Unix(1700000000, 0))
+clock := testutil.StepClock(time.Unix(1700000000, 0)) // +1с на каждый Now()
 rand := testutil.FixedRand("550e8400-e29b-41d4-a716-446655440000")
 ```
 
 `FixedRand.UUID4()` всегда возвращает предзагруженную строку; для
 нескольких вызовов — по очереди из слайса. Это даёт детерминированные
-JSON-ярлыки в golden-тестах.
+JSON-ярлыки в golden-тестах. `StepClock` даёт строго возрастающие метки
+времени (форматирование, сессии) — нужен интеграционным тестам, где
+порядок «новые сверху» зависит от timestamp.
+
+### 3.6. `StaticConfig`
+
+Двойник `port.ConfigSource` с фиксированным списком заданий (поле
+`JobList`); остальные геттеры возвращают нулевые значения. Нужен
+интеграционным и hardware-тестам, собирающим реальный
+`backup.UseCase` без TOML-файла.
 
 ## 4. Coverage цели
 
