@@ -650,7 +650,7 @@ e2e-сценарий API прогнан вручную — см. выше).
 
 ---
 
-## Этап 10 — CI, README, финал
+## Этап 10 — CI, README, финал — ЗАВЕРШЁН
 
 **Файлы:**
 - `.github/workflows/ci.yml` — на push/PR:
@@ -667,4 +667,41 @@ e2e-сценарий API прогнан вручную — см. выше).
   SPECIFICATION §9.1).
 - Возможно `docs/CHANGELOG.md` — пустой каркас.
 
-**Готовность:** CI зелёный на main.
+**Готовность:** CI зелёный на main. ✅
+
+> **Статус: завершён** (коммиты `5cb84f2`…`27df5d6`, 2026-08-16; CI
+> зелёный на `main` после трёх прогонов). Отступления от плана и
+> зафиксированные решения:
+> - `.forgejo/workflows/build.yml` вместо `.github/workflows/ci.yml`:
+>   проект хостится на self-hosted Forgejo (git.yadr00.internal), CI —
+>   по образцу Intermasq 1-в-1 (fedora:44-контейнер, Nora-зеркала
+>   GOPROXY/npm/RPM, step-ca trust, workflow_dispatch c input'ами
+>   `push_to_registry`/`version_tag`/`run_race_tests`); auto-run на
+>   push/PR не заводился — ручной запуск, как в Intermasq;
+> - версия бинаря — точный тег `v*` на HEAD → input → `sha-<hex8>`;
+>   бинарь статический (CGO_ENABLED=0), артефакт `lentovodets-<ver>-
+>   linux-amd64`(+`.sha256`) публикуется в Forgejo Packages + Release
+>   по кнопке (`UPLOAD_TOKEN`); зеркало (mirror.yaml) не создавалось;
+> - жёсткого порога покрытия в CI нет — отчёт информационный: фактический
+>   total 87.5% (против ≥90% в этом плане) из-за плановых 60–80% у
+>   iface/cli (75.1%) и iface/web (82.7%); также `usecase/restore` 94.6%
+>   при цели ≥95 и domain 95.4% (было 100% на Этапе 1 — код Этапа 6
+>   добавил ветки) — принято как есть, цели уточнены по факту;
+> - **исправлены долги, найденные CI**: gofmt-выравнивание в 3 файлах +
+>   unconvert/SA1012/ineffassign в iface/web (локальный кастомный
+>   golangci-lint v1.64.8 молчит на развёрнутых паттернах `./...` и
+>   честен на точечном пакете — этапные «lint зелёный» были искренними;
+>   CI-шаг `gofmt -l` от этого не зависит); `unparam` добавлен в
+>   exclude-rules для `_test.go`;
+> - **исправлены платформозависимости** (Windows-локаль против
+>   Linux-CI): Scanner форсирует `Size=0` для каталогов (Lstat-размер
+>   каталога ≠ 0 на Linux попадал в `Stats.Bytes`), destfs срезает имя
+>   тома `C:` и на ОС без `VolumeName` (бекап на Windows → restore на
+>   Linux);
+> - имя проекта — **Lentovodets** (репозиторий, пакеты, релизы);
+>   имя модуля Go, бинаря и конфига осталось `lentovodec`
+>   (переименование кода не проводилось — задело бы env/конфиги);
+> - README финальный: сборка из исходников и CI-артефактов, конфиг,
+>   таблица CLI, Web UI + SSH-туннель, rootless-развёртывание
+>   (useradd/udev/systemd-харднинг, SPEC §9.1), CI, dev-команды;
+> - `docs/CHANGELOG.md` — Keep-a-Changelog каркас + запись 1.0.0.
