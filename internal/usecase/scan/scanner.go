@@ -66,9 +66,14 @@ func (s *Scanner) Scan(ctx context.Context, job domain.Job, lastSnapshot []domai
 
 			cur := domain.FileMeta{
 				Path:    p,
-				Size:    info.Size(),
 				ModTime: info.ModTime().UnixNano(),
 				IsDir:   info.IsDir(),
+			}
+			if !cur.IsDir {
+				// Размер только у файлов: Lstat-размер каталога
+				// платформозависим (Windows 0, Linux ≠ 0) и данными не
+				// является; модификация каталога детектится по mtime.
+				cur.Size = info.Size()
 			}
 			prev, existed := snapshot[p]
 			switch {

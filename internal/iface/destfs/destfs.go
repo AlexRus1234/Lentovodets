@@ -66,7 +66,13 @@ func (f *relocFS) Remove(path string) error {
 func (f *relocFS) relocate(p string) string {
 	clean := filepath.Clean(p)
 	rest := strings.TrimPrefix(clean, filepath.VolumeName(clean))
-	rest = strings.TrimPrefix(filepath.ToSlash(rest), "/")
+	rest = filepath.ToSlash(rest)
+	// Имя тома срезается и там, где текущая ОС его не видит: индекс
+	// мог быть записан на другой ОС ("C:/data" при restore на Linux).
+	if len(rest) > 2 && rest[0] != '/' && rest[1] == ':' && rest[2] == '/' {
+		rest = rest[2:]
+	}
+	rest = strings.TrimPrefix(rest, "/")
 	if rest == "" || rest == "." {
 		return f.dest
 	}
