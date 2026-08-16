@@ -55,6 +55,11 @@ type harness struct {
 	tapePath string
 	dbPath   string
 
+	// tapeCapacity > 0 — открывать filetape с лимитом ёмкости
+	// (OpenCapacity, сценарии «кончилась лента»); применяется при
+	// очередном openTape/reopen.
+	tapeCapacity int64
+
 	fs     *osfs.FS
 	codec  *tapeformat.Codec
 	hasher *xxhash.Hasher
@@ -112,10 +117,19 @@ func (h *harness) addJob(job domain.Job) {
 	h.cfg.JobList = append(h.cfg.JobList, job)
 }
 
-// openTape открывает (или переоткрывает) файл-ленту.
+// openTape открывает (или переоткрывает) файл-ленту; при заданном
+// tapeCapacity — с лимитом ёмкости.
 func (h *harness) openTape() {
 	h.t.Helper()
-	tp, err := filetape.Open(h.tapePath)
+	var (
+		tp  *filetape.Tape
+		err error
+	)
+	if h.tapeCapacity > 0 {
+		tp, err = filetape.OpenCapacity(h.tapePath, h.tapeCapacity)
+	} else {
+		tp, err = filetape.Open(h.tapePath)
+	}
 	if err != nil {
 		h.t.Fatalf("filetape.Open: %v", err)
 	}

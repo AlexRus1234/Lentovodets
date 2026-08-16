@@ -253,7 +253,33 @@ func (uc *UseCase) writeSession(
 			writeErr = errors.Join(writeErr,
 				fmt.Errorf("backup: откат сессии %d из каталога: %w", sess.ID, delErr))
 		}
+		writeErr = errors.Join(writeErr, uc.restoreEOD(ctx, lastNum))
 		return mapTapeFull(writeErr, tracker.written)
+	}
+	return nil
+}
+
+// restoreEOD — best-effort восстановление ленты после сбоя записи
+// сессии: за старым EOD может остаться грязный хвост частичной записи,
+// делающий дозапись невозможной. Позиция старого EOD вычисляется из
+// инварианта FORMAT §4 (лента с lastNum сессиями содержит 2*lastNum+1
+// меток ярлыка и сессий до закрывающей пары), запись пары WriteEOF с
+// этой позиции усекает хвост (запись с позиции уничтожает остаток
+// ленты). Новых операций port.Tape не требуется. Ошибки восстановления
+// не глотаются и несут рекомендацию оператору; сбой перемотки
+// присоединяется как есть — привести ленту нечем.
+func (uc *UseCase) restoreEOD(ctx context.Context, lastNum int32) error {
+	const advice = "кассета читается, для дозаписи выполните lentovodec tape readtest; при повторных сбоях — переформатировать"
+	if err := uc.tape.Rewind(ctx); err != nil {
+		return fmt.Errorf("backup: восстановление ленты после сбоя записи: перемотка: %w", err)
+	}
+	if err := uc.tape.ForwardFilemarks(ctx, int(2*lastNum+1)); err != nil {
+		return fmt.Errorf(
+			"backup: восстановление ленты после сбоя записи: позиционирование MTFSF(%d): %w; %s",
+			2*lastNum+1, err, advice)
+	}
+	if err := uc.closeEOD(ctx); err != nil {
+		return fmt.Errorf("backup: восстановление ленты после сбоя записи: запись EOD-пары: %w; %s", err, advice)
 	}
 	return nil
 }

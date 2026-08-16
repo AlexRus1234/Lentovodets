@@ -19,7 +19,10 @@ package backup_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,26 +52,35 @@ func jobsAppend() []domain.Job {
 }
 
 // recTape — FakeTape, запоминающий аргументы ForwardFilemarks и умеющий
-// ронять k-й WriteEOF (failEOFOn > 0).
+// ронять k-й WriteEOF (failEOFOn > 0). ops — журнал операций ленты
+// (rewind/fsf:N/weof) для сверки последовательности отката.
 type recTape struct {
 	*testutil.FakeTape
 	fsf       []int
 	failEOFOn int
 	eofErr    error
 	eofCalls  int
+	ops       []string
 }
 
 func (t *recTape) ForwardFilemarks(ctx context.Context, n int) error {
 	t.fsf = append(t.fsf, n)
+	t.ops = append(t.ops, "fsf:"+fmt.Sprintf("%d", n))
 	return t.FakeTape.ForwardFilemarks(ctx, n)
 }
 
 func (t *recTape) WriteEOF(ctx context.Context) error {
 	t.eofCalls++
+	t.ops = append(t.ops, "weof")
 	if t.failEOFOn > 0 && t.eofCalls == t.failEOFOn {
 		return t.eofErr
 	}
 	return t.FakeTape.WriteEOF(ctx)
+}
+
+func (t *recTape) Rewind(ctx context.Context) error {
+	t.ops = append(t.ops, "rewind")
+	return t.FakeTape.Rewind(ctx)
 }
 
 // harness — собранное окружение одного запуска.
@@ -458,6 +470,110 @@ func TestBackup_EODPairFailures(t *testing.T) {
 	}
 }
 
+// TestBackup_WriteFailureRestoresEOD — при сбое записи лента
+// возвращается к старому EOD (сессия 1 плана spanning): после
+// позиционирования записи — Rewind + MTFSF(2K+1) + пара WriteEOF,
+// усекающая грязный хвост; повторный бекап на восстановленную ленту
+// проходит.
+func TestBackup_WriteFailureRestoresEOD(t *testing.T) {
+	h := newHarness(t, map[string]string{"etc/hosts": "x"})
+	ctx := context.Background()
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#1: %v", err)
+	}
+	h.fs.MapFS["etc/hosts"].ModTime = time.Unix(10, 0)
+	boom := errors.New("boom")
+	h.codec.ErrWrite = boom
+	h.rec.ops = nil
+
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); !errors.Is(err, boom) {
+		t.Fatalf("Backup#2: %v; want boom", err)
+	}
+	// readLabel: rewind; writeSession: rewind + MTFSF(2K+1)=3 (K=1);
+	// восстановление: rewind, MTFSF(3) на старый EOD, пара WriteEOF.
+	want := []string{"rewind", "rewind", "fsf:3", "rewind", "fsf:3", "weof", "weof"}
+	if !slices.Equal(h.rec.ops, want) {
+		t.Fatalf("операции ленты = %v; want %v", h.rec.ops, want)
+	}
+	// лента консистентна: K=1 → 2K+3 = 5 filemark'ов, грязного хвоста нет
+	if got := h.fakeTape.MarkCount(); got != 5 {
+		t.Errorf("MarkCount = %d; want 5", got)
+	}
+	sessions, _ := h.cat.ListSessions(ctx, "tape-uuid")
+	if len(sessions) != 1 {
+		t.Errorf("сессий в каталоге %d; want 1", len(sessions))
+	}
+
+	// дозапись на восстановленную ленту проходит
+	h.codec.ErrWrite = nil
+	res, err := h.uc.Backup(ctx, "daily", backup.Options{})
+	if err != nil {
+		t.Fatalf("Backup#3 на восстановленной ленте: %v", err)
+	}
+	if res.Session.Num != 2 || res.Session.Type != domain.SessionInc {
+		t.Errorf("сессия #3: %+v; want Num=2 INC", res.Session)
+	}
+}
+
+// TestBackup_RestoreEODFailuresJoined — ошибки восстановления ленты
+// не глотаются: присоединяются к исходной ошибке записи, ошибки после
+// перемотки несут рекомендацию оператору.
+func TestBackup_RestoreEODFailuresJoined(t *testing.T) {
+	boom, boom2 := errors.New("boom"), errors.New("boom2")
+	cases := []struct {
+		name       string
+		prep       func(t *testing.T, h *harness)
+		wantAdvice bool
+	}{
+		{
+			name: "rewind fails",
+			prep: func(t *testing.T, h *harness) {
+				h.codec.ErrWrite = boom
+				h.swapTape(func(inner *testutil.FakeTape) port.Tape {
+					return &failTapeBy{FakeTape: inner, rewindFail: 3, rewindErr: boom2}
+				})
+			},
+		},
+		{
+			name: "positioning fails",
+			prep: func(t *testing.T, h *harness) {
+				h.codec.ErrWrite = boom
+				h.swapTape(func(inner *testutil.FakeTape) port.Tape {
+					return &failTapeBy{FakeTape: inner, fsfFail: 2, fsfErr: boom2}
+				})
+			},
+			wantAdvice: true,
+		},
+		{
+			name: "eod mark fails",
+			prep: func(t *testing.T, h *harness) {
+				h.codec.ErrWrite = boom
+				h.rec.failEOFOn = 1 // первый WriteEOF восстановления
+				h.rec.eofErr = boom2
+			},
+			wantAdvice: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{"etc/hosts": "x"})
+			tc.prep(t, h)
+			h.rebuild()
+			_, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+			if !errors.Is(err, boom) || !errors.Is(err, boom2) {
+				t.Fatalf("Backup: %v; want joined boom+boom2", err)
+			}
+			if tc.wantAdvice && !strings.Contains(err.Error(), "tape readtest") {
+				t.Fatalf("Backup: ошибка %v без рекомендации readtest", err)
+			}
+			sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+			if len(sessions) != 0 {
+				t.Errorf("сессия не откачена из каталога: %+v", sessions)
+			}
+		})
+	}
+}
+
 func TestBackup_SaveFilesFailure(t *testing.T) {
 	h := newHarness(t, map[string]string{"etc/hosts": "x"})
 	boom := errors.New("boom")
@@ -544,7 +660,9 @@ func (c *failCatalogBy) SaveFiles(ctx context.Context, sessionID int64, files []
 	return c.MemCatalog.SaveFiles(ctx, sessionID, files)
 }
 
-// failTapeBy — FakeTape, роняющий выбранные операции.
+// failTapeBy — FakeTape, роняющий выбранные операции. fsfErr без
+// fsfFail роняет каждый ForwardFilemarks, с fsfFail — только k-й
+// (аналогично rewindFail).
 type failTapeBy struct {
 	*testutil.FakeTape
 	readErr    error
@@ -552,6 +670,8 @@ type failTapeBy struct {
 	fsfErr     error
 	rewindCnt  int
 	rewindFail int
+	fsfCnt     int
+	fsfFail    int
 }
 
 func (t *failTapeBy) ReadBlock(ctx context.Context) ([]byte, error) {
@@ -563,14 +683,15 @@ func (t *failTapeBy) ReadBlock(ctx context.Context) ([]byte, error) {
 
 func (t *failTapeBy) Rewind(ctx context.Context) error {
 	t.rewindCnt++
-	if t.rewindErr != nil || t.rewindFail == t.rewindCnt {
+	if t.rewindErr != nil && (t.rewindFail == 0 || t.rewindFail == t.rewindCnt) {
 		return t.rewindErr
 	}
 	return t.FakeTape.Rewind(ctx)
 }
 
 func (t *failTapeBy) ForwardFilemarks(ctx context.Context, n int) error {
-	if t.fsfErr != nil {
+	t.fsfCnt++
+	if t.fsfErr != nil && (t.fsfFail == 0 || t.fsfFail == t.fsfCnt) {
 		return t.fsfErr
 	}
 	return t.FakeTape.ForwardFilemarks(ctx, n)

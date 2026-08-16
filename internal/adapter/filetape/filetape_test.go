@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -579,6 +580,178 @@ func TestTape_ImplementsPortTape(t *testing.T) {
 	tp := openTape(t, filepath.Join(t.TempDir(), "tape.dat"))
 	defer tp.Close()
 	var _ port.Tape = tp
+}
+
+// openCapTape открывает ленту с лимитом ёмкости или падает.
+func openCapTape(t *testing.T, path string, capacity int64) *filetape.Tape {
+	t.Helper()
+	tp, err := filetape.OpenCapacity(path, capacity)
+	if err != nil {
+		t.Fatalf("filetape.OpenCapacity(%q, %d): %v", path, capacity, err)
+	}
+	return tp
+}
+
+func TestOpenCapacity_BlocksAndFilemarksCounted(t *testing.T) {
+	capB := int64(2*domain.BlockSize + 2)
+	tp := openCapTape(t, filepath.Join(t.TempDir(), "tape.dat"), capB)
+	defer tp.Close()
+	ctx := context.Background()
+
+	writeBlock(t, tp, "one")
+	writeBlock(t, tp, "two")
+	writeEOF(t, tp)
+	writeEOF(t, tp) // 2*BlockSize + 2 — ровно на границе лимита, влезает
+
+	wantErr(t, "WriteBlock за лимитом", "no space left on device",
+		tp.WriteBlock(ctx, []byte("over")))
+	wantErr(t, "WriteEOF за лимитом", "no space left on device",
+		tp.WriteEOF(ctx))
+
+	// отклонённые записи не оставили следов: лента читается до конца
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	wantBlock(t, tp, "one")
+	wantBlock(t, tp, "two")
+	wantEOF(t, tp)
+	wantEOF(t, tp)
+	wantEOF(t, tp) // EOD
+}
+
+func TestOpenCapacity_RejectedWriteKeepsTape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.dat")
+	tp := openCapTape(t, path, int64(domain.BlockSize+1))
+	defer tp.Close()
+	ctx := context.Background()
+
+	writeBlock(t, tp, "only")
+	writeEOF(t, tp) // лимит исчерпан
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat до отказа: %v", err)
+	}
+
+	wantErr(t, "WriteBlock за лимитом", "no space left on device",
+		tp.WriteBlock(ctx, []byte("x")))
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat после отказа: %v", err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatalf("отказ изменил файл: %d → %d байт", before.Size(), after.Size())
+	}
+
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	wantBlock(t, tp, "only")
+	wantEOF(t, tp) // filemark
+	wantEOF(t, tp) // EOD
+}
+
+// TestOpenCapacity_TruncateFreesSpaceForRewrite — сценарий ENOSPC-отката
+// (сессия 1 сессии-00/тома §2.3): запись сверх лимита отклоняется, откат
+// Rewind+FSF+WEOF×2 усекает грязный хвост, место освобождается для
+// дозаписи.
+func TestOpenCapacity_TruncateFreesSpaceForRewrite(t *testing.T) {
+	capB := int64(2*domain.BlockSize + 4)
+	tp := openCapTape(t, filepath.Join(t.TempDir(), "tape.dat"), capB)
+	defer tp.Close()
+	ctx := context.Background()
+
+	writeBlock(t, tp, "s1")
+	writeEOF(t, tp)            // конец сессии 1
+	writeBlock(t, tp, "dirty") // неудавшаяся запись…
+	writeEOF(t, tp)            // …её метка
+	writeEOF(t, tp)            // EOD-пара
+	wantErr(t, "блок сверх ёмкости", "no space left on device",
+		tp.WriteBlock(ctx, []byte("more")))
+
+	// откат к старому EOD: позиция за меткой сессии 1, пара WEOF
+	// усекает грязный хвост (запись с позиции уничтожает остаток).
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	if err := tp.ForwardFilemarks(ctx, 1); err != nil {
+		t.Fatalf("ForwardFilemarks: %v", err)
+	}
+	writeEOF(t, tp)
+	writeEOF(t, tp)
+
+	// дозапись в освободившееся место проходит до ровно лимита
+	writeBlock(t, tp, "s2")
+	writeEOF(t, tp)
+
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	wantBlock(t, tp, "s1")
+	wantEOF(t, tp) // метка сессии 1
+	wantEOF(t, tp) // EOD-пара отката
+	wantEOF(t, tp)
+	wantBlock(t, tp, "s2")
+	wantEOF(t, tp) // метка сессии 2
+	wantEOF(t, tp) // EOD
+}
+
+func TestOpenCapacity_ReopenRecountsUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.dat")
+	capB := int64(2*domain.BlockSize + 1)
+	tp := openCapTape(t, path, capB)
+	writeBlock(t, tp, "a")
+	writeBlock(t, tp, "b") // 2*BlockSize — весь лимит без запаса на блок
+	if err := tp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	tp2 := openCapTape(t, path, capB)
+	defer tp2.Close()
+	ctx := context.Background()
+	if err := tp2.EndOfData(ctx); err != nil {
+		t.Fatalf("EndOfData: %v", err)
+	}
+	writeEOF(t, tp2) // 2*BlockSize+1 — влезает ровно: переоткрытие всё посчитало
+	wantErr(t, "WriteBlock после переоткрытия", "no space left on device",
+		tp2.WriteBlock(ctx, []byte("c")))
+
+	// Open без лимита на том же файле — ёмкость бесконечна
+	tp3 := openTape(t, path)
+	defer tp3.Close()
+	if err := tp3.EndOfData(ctx); err != nil {
+		t.Fatalf("EndOfData: %v", err)
+	}
+	writeBlock(t, tp3, "c")
+}
+
+func TestOpenCapacity_InvalidCapacity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.dat")
+	for _, capB := range []int64{0, -1} {
+		_, err := filetape.OpenCapacity(path, capB)
+		wantErr(t, fmt.Sprintf("OpenCapacity(%d)", capB), "capacity должен быть > 0", err)
+	}
+}
+
+func TestOpenCapacity_CorruptRecordsFailOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.dat")
+	tp := openTape(t, path)
+	writeBlock(t, tp, "data")
+	if err := tp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// испортить тип первой записи: подсчёт ёмкости не пройдёт
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := f.WriteAt([]byte{0xFF}, 8); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	}
+	f.Close()
+
+	if _, err := filetape.OpenCapacity(path, int64(domain.BlockSize)); err == nil {
+		t.Fatal("OpenCapacity(битые записи): хочу ошибку подсчёта ёмкости")
+	}
 }
 
 // TestEquivalenceWithFakeTape прогоняет один сценарий (запись, дозапись

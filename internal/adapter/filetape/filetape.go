@@ -52,20 +52,50 @@ const (
 // concurrent use: все операции под мьютексом. Открытие всегда ставит
 // позицию в начало ленты (BOT), как загрузка кассеты в привод.
 type Tape struct {
-	mu   sync.Mutex
-	f    *os.File
-	pos  int64 // смещение следующей читаемой/пишемой записи
-	size int64 // логический размер данных (>= len(fileMagic))
+	mu       sync.Mutex
+	f        *os.File
+	pos      int64 // смещение следующей читаемой/пишемой записи
+	size     int64 // логический размер данных (>= len(fileMagic))
+	capacity int64 // лимит полезной ёмкости; <= 0 — без лимита
+	used     int64 // расход ёмкости при capacity > 0 (актуален до size)
 }
 
 // Open открывает (или создаёт) файл-ленту по пути path. Существующий
 // непустой файл должен быть файлом-лентой, иначе InvalidTapeFileError.
+// Ёмкость не ограничена; для лимита см. OpenCapacity.
 func Open(path string) (*Tape, error) {
+	return open(path, 0)
+}
+
+// OpenCapacity открывает (или создаёт) файл-ленту с лимитом ёмкости —
+// чтобы сценарии «кончилась лента» гонялись в CI без привода.
+//
+// Семантика лимита (в байтах полезной записи; magic-заголовок и
+// заголовки фреймов файла-ленты не учитываются):
+//   - блок данных занимает domain.BlockSize — блоки хранятся добитыми
+//     до полного размера, как на реальной ленте;
+//   - filemark занимает 1 байт.
+//
+// WriteBlock/WriteEOF, не влезающие в остаток ёмкости, возвращают
+// ошибку, содержащую «no space left on device» (её распознаёт
+// backup-слой как конец ленты), и не меняют ленту. При открытии
+// существующего файла использованная ёмкость пересчитывается по его
+// записям; если записей больше, чем влезает в лимит, открытие успешно,
+// но любая запись будет отклонена.
+func OpenCapacity(path string, capacity int64) (*Tape, error) {
+	if capacity <= 0 {
+		return nil, fmt.Errorf("filetape: OpenCapacity: capacity должен быть > 0, получено %d", capacity)
+	}
+	return open(path, capacity)
+}
+
+// open — общая реализация Open/OpenCapacity.
+func open(path string, capacity int64) (*Tape, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("filetape: открытие %q: %w", path, err)
 	}
-	t := &Tape{f: f}
+	t := &Tape{f: f, capacity: capacity}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -89,6 +119,14 @@ func Open(path string) (*Tape, error) {
 			return nil, &InvalidTapeFileError{Path: path}
 		}
 		t.size = st.Size()
+	}
+	if capacity > 0 {
+		used, err := t.usageUpTo(t.size)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("filetape: подсчёт ёмкости %q: %w", path, err)
+		}
+		t.used = used
 	}
 	t.pos = int64(len(fileMagic))
 	return t, nil
@@ -266,7 +304,28 @@ func (t *Tape) recordAt(off int64) (byte, uint32, int64, error) {
 }
 
 // appendLocked пишет запись в текущую позицию, усекая хвост файла.
+// При заданном лимите ёмкости запись, не влезающая в остаток,
+// отклоняется до любых изменений ленты (усечение хвоста перед
+// отклонённой записью не выполняется).
 func (t *Tape) appendLocked(rec []byte) error {
+	base := t.used
+	if t.capacity > 0 {
+		if t.pos < t.size {
+			// Хвост после позиции будет усечён: остаток ёмкости
+			// считается по записям до позиции.
+			var err error
+			base, err = t.usageUpTo(t.pos)
+			if err != nil {
+				return err
+			}
+		}
+		cost := recordCost(rec)
+		if base+cost > t.capacity {
+			return fmt.Errorf(
+				"filetape: no space left on device: лимит %d байт: использовано %d, запись требует ещё %d",
+				t.capacity, base, cost)
+		}
+	}
 	if t.pos < t.size {
 		if err := t.f.Truncate(t.pos); err != nil {
 			return fmt.Errorf("filetape: усечение до смещения %d: %w", t.pos, err)
@@ -278,7 +337,41 @@ func (t *Tape) appendLocked(rec []byte) error {
 	}
 	t.pos += int64(len(rec))
 	t.size += int64(len(rec))
+	if t.capacity > 0 {
+		t.used = base + recordCost(rec)
+	}
 	return nil
+}
+
+// usageUpTo суммирует полезную ёмкость записей от BOT до смещения off
+// (off обязан быть границей записи): блок данных — domain.BlockSize,
+// filemark — 1 байт. Вызывается только под мьютексом или до публикации
+// ленты из open.
+func (t *Tape) usageUpTo(off int64) (int64, error) {
+	var used int64
+	cur := int64(len(fileMagic))
+	for cur < off {
+		typ, _, next, err := t.recordAt(cur)
+		if err != nil {
+			return 0, err
+		}
+		if typ == recData {
+			used += domain.BlockSize
+		} else {
+			used++
+		}
+		cur = next
+	}
+	return used, nil
+}
+
+// recordCost — расход полезной ёмкости на запись: блок данных занимает
+// domain.BlockSize (хранится добитым до полного блока), filemark — 1 байт.
+func recordCost(rec []byte) int64 {
+	if rec[0] == recData {
+		return domain.BlockSize
+	}
+	return 1
 }
 
 // InvalidTapeFileError — файл существует, но не является файлом-лентой
