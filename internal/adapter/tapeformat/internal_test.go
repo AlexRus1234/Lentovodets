@@ -17,10 +17,13 @@
 package tapeformat
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
+	"lentovodec/internal/testutil"
 )
 
 // encodeBlocks обязан возвращать ошибку для значений, которые не умеет
@@ -42,4 +45,52 @@ func TestDiscardProgress(t *testing.T) {
 	prog.Update(port.ProgressUpdate{Phase: port.PhaseWrite, CurrentFile: "/x"})
 	prog.Done()
 	prog.Fail(nil)
+}
+
+// readIndex: индекс старой ленты без part/continues → Part=1, Continues="";
+// явные значения сохраняются. Нормализация <1 → 1 защищает и от
+// отрицательного мусора.
+func TestReadIndex_PartNormalization(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name      string
+		part      int32
+		continues string
+		wantPart  int32
+	}{
+		{"старая лента (полей нет)", 0, "", 1},
+		{"отрицательный мусор", -3, "", 1},
+		{"часть цепочки", 3, "uuid-prev", 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tape := testutil.NewFakeTape()
+			idx := SessionIndex{
+				FormatVersion: domain.FormatVersion,
+				SessionNum:    1,
+				Type:          domain.SessionFull,
+				JobRunID:      "run",
+				Timestamp:     1700000000,
+				JobName:       "j",
+				Part:          tc.part,
+				Continues:     tc.continues,
+			}
+			if err := WriteSession(ctx, tape, idx, testutil.NewMapFS(nil), nil); err != nil {
+				t.Fatalf("WriteSession: %v", err)
+			}
+			if err := tape.Rewind(ctx); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readIndex(ctx, tape)
+			if err != nil {
+				t.Fatalf("readIndex: %v", err)
+			}
+			if got.Part != tc.wantPart {
+				t.Errorf("Part = %d; want %d", got.Part, tc.wantPart)
+			}
+			if got.Continues != tc.continues {
+				t.Errorf("Continues = %q; want %q", got.Continues, tc.continues)
+			}
+		})
+	}
 }

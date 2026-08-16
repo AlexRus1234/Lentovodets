@@ -230,6 +230,27 @@ func TestCatalog_ReadTestDamaged(t *testing.T) {
 	}
 }
 
+func TestCatalog_ReadTestContinuationStops(t *testing.T) {
+	cat, _, _ := seedCatalog(t)
+	codec := &testutil.FakeCodec{}
+	tape := labeledTape(t, codec)
+	codec.Queue = [][]domain.FileMeta{{{Path: "/a"}}}
+	// за сессией — указатель продолжения: остановка без ошибки
+	codec.ContOnCall = 2
+	codec.Cont = &domain.ContinuationError{
+		JobRunID: "run", SessionNum: 2, Part: 2, NextTapeName: "media-014",
+	}
+	uc := newCatalogUC(cat, tape, codec)
+
+	n, err := uc.ReadTest(context.Background())
+	if err != nil {
+		t.Fatalf("ReadTest: %v; want nil (продолжение — не ошибка)", err)
+	}
+	if n != 1 {
+		t.Fatalf("проверено %d сессий; want 1", n)
+	}
+}
+
 func TestCatalog_TapeErrors(t *testing.T) {
 	cat, _, _ := seedCatalog(t)
 	codec := &testutil.FakeCodec{}

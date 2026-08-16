@@ -39,6 +39,9 @@ import (
 // tar-поток. Возвращает файлы индекса (включая tombstone'ы — восстановление
 // mirror трактует их как удаление, docs/FORMAT.md §6). После возврата лента
 // стоит за filemark'ом tar-потока — готова к чтению следующей сессии подряд.
+// Если на позиции сессии лежит блок-указатель продолжения — ошибка
+// *domain.ContinuationError (кассета кончилась, цепочка продолжается
+// на следующей).
 //
 // dest == nil — режим проверки (readtest): содержимое читается и хеши
 // сверяются, но на ФС ничего не пишется.
@@ -63,6 +66,8 @@ func ReadSession(
 }
 
 // readIndex читает сегмент индекса (блоки до filemark'а) и разбирает JSON.
+// На позиции сессии может лежать блок-указатель продолжения — это
+// *domain.ContinuationError (кассета кончилась, есть продолжение).
 func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 	var buf []byte
 	for {
@@ -79,9 +84,15 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("tapeformat: %w", &domain.EmptyIndexError{})
 	}
+	if err := checkContinuation(trimmed); err != nil {
+		return nil, err
+	}
 	var idx SessionIndex
 	if err := json.Unmarshal(trimmed, &idx); err != nil {
 		return nil, fmt.Errorf("tapeformat: разбор индекса: %w", err)
+	}
+	if idx.Part < 1 {
+		idx.Part = 1 // старые ленты без поля part — все сессии часть 1
 	}
 	if idx.FormatVersion > domain.FormatVersion {
 		return nil, &domain.NewerFormatError{Found: idx.FormatVersion, Supported: domain.FormatVersion}

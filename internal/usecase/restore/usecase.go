@@ -86,6 +86,17 @@ func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 		if errors.As(err, &empty) {
 			break // EOD: сессии закончились
 		}
+		var cont *domain.ContinuationError
+		if errors.As(err, &cont) {
+			// Кассета кончилась, цепочка продолжается на следующей;
+			// следование по указателю — сессия 6 плана spanning.
+			uc.log.Warn("найден указатель продолжения; следование по цепочке кассет пока не реализовано",
+				slog.String("next_tape", cont.NextTapeName),
+				slog.String("job_run_id", cont.JobRunID),
+				slog.Int("session_num", int(cont.SessionNum)),
+				slog.Int("part", int(cont.Part)))
+			break
+		}
 		if err != nil {
 			if isSessionDamage(err) {
 				uc.log.Warn("повреждённая сессия пропущена",

@@ -218,6 +218,27 @@ func TestRestore_FullAppliesTombstones(t *testing.T) {
 	}
 }
 
+func TestRestore_FullContinuationStops(t *testing.T) {
+	h := newHarness(t)
+	h.addSession(t, 1, []domain.FileMeta{meta("/a")})
+	// вторая «сессия» — указатель продолжения: Warn и остановка без ошибки
+	h.codec.ContOnCall = 2
+	h.codec.Cont = &domain.ContinuationError{
+		JobRunID: "run", SessionNum: 2, Part: 2, NextTapeName: "media-014",
+	}
+
+	st, err := h.uc.Full(context.Background())
+	if err != nil {
+		t.Fatalf("Full: %v; want nil (продолжение — не ошибка)", err)
+	}
+	if st.Sessions != 1 || st.Files != 1 {
+		t.Fatalf("статистика: %+v; want 1 сессия, 1 файл", st)
+	}
+	if h.prog.done != 1 || h.prog.fails != 0 {
+		t.Errorf("прогресс: done=%d fails=%d; want 1/0", h.prog.done, h.prog.fails)
+	}
+}
+
 func TestRestore_Selective(t *testing.T) {
 	h := newHarness(t)
 	id := h.addSession(t, 1, []domain.FileMeta{

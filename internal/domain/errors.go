@@ -215,3 +215,46 @@ func (e *EmptyIndexError) Is(target error) bool {
 	_, ok := target.(*EmptyIndexError)
 	return ok
 }
+
+// ContinuationError — при последовательном чтении ленты на позиции
+// сессии найден блок-указатель продолжения: кассета кончилась,
+// цепочка сессий продолжается на следующей кассете. Поля — напрямую
+// (domain не импортирует port; port.Continuation конвертируется в
+// них адаптером).
+type ContinuationError struct {
+	JobRunID     string // UUID запуска, к которому относится цепочка
+	SessionNum   int32  // номер сессии на ленте
+	Part         int32  // номер части, продолжающейся на следующей кассете
+	NextTapeName string // имя следующей кассеты цепочки
+}
+
+// Error реализует интерфейс error.
+func (e *ContinuationError) Error() string {
+	return fmt.Sprintf(
+		"кассета имеет продолжение: сессия %d, часть %d — на кассете %q",
+		e.SessionNum, e.Part, e.NextTapeName)
+}
+
+// Is поддерживает errors.Is(err, &ContinuationError{}).
+func (e *ContinuationError) Is(target error) bool {
+	_, ok := target.(*ContinuationError)
+	return ok
+}
+
+// NotContinuationError — блок на позиции указателя продолжения не
+// является continuation-блоком: битый JSON или чужой блок без
+// kind:"continuation".
+type NotContinuationError struct {
+	Snippet string // первые байты блока для диагностики
+}
+
+// Error реализует интерфейс error.
+func (e *NotContinuationError) Error() string {
+	return fmt.Sprintf("блок не является указателем продолжения: %q", e.Snippet)
+}
+
+// Is поддерживает errors.Is(err, &NotContinuationError{}).
+func (e *NotContinuationError) Is(target error) bool {
+	_, ok := target.(*NotContinuationError)
+	return ok
+}

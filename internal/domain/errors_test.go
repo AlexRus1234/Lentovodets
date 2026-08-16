@@ -94,6 +94,24 @@ func TestTypedErrors(t *testing.T) {
 			"media-001",
 			&domain.AlreadyFormattedError{},
 		},
+		{
+			"файл больше кассеты",
+			&domain.FileTooLargeError{Path: "/tank/big.bin", Size: 10, Capacity: 5},
+			"больше бюджета кассеты",
+			&domain.FileTooLargeError{},
+		},
+		{
+			"указатель продолжения",
+			&domain.ContinuationError{JobRunID: "run", SessionNum: 7, Part: 2, NextTapeName: "media-014"},
+			`на кассете "media-014"`,
+			&domain.ContinuationError{},
+		},
+		{
+			"не указатель продолжения",
+			&domain.NotContinuationError{Snippet: "NIL_BACKUP_TAPE"},
+			"не является указателем продолжения",
+			&domain.NotContinuationError{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,5 +155,14 @@ func TestErrorsAsExtractsDetails(t *testing.T) {
 	var no *domain.SessionNotFoundError
 	if errors.As(wrapped, &no) {
 		t.Error("errors.As не должен находить SessionNotFoundError в TapeFullError")
+	}
+
+	var cont *domain.ContinuationError
+	if !errors.As(fmt.Errorf("чтение: %w",
+		&domain.ContinuationError{NextTapeName: "media-014", Part: 2}), &cont) {
+		t.Fatal("errors.As не извлёк ContinuationError")
+	}
+	if cont.NextTapeName != "media-014" || cont.Part != 2 {
+		t.Errorf("ContinuationError = %+v, want {NextTapeName:media-014 Part:2}", cont)
 	}
 }

@@ -59,6 +59,8 @@ func (Codec) WriteSession(
 		JobRunID:      header.JobRunID,
 		Timestamp:     header.Timestamp,
 		JobName:       header.JobName,
+		Part:          header.Part,
+		Continues:     header.Continues,
 		Files:         files,
 	}, fs, prog)
 }
@@ -72,4 +74,14 @@ func (Codec) ReadSession(
 	prog port.ProgressReporter,
 ) ([]domain.FileMeta, error) {
 	return ReadSession(ctx, tape, dest, prog)
+}
+
+// WriteContinuation пишет блок-указатель продолжения и filemark EOD.
+func (Codec) WriteContinuation(ctx context.Context, tape port.Tape, c port.Continuation) error {
+	return WriteContinuation(ctx, tape, c)
+}
+
+// ReadContinuation читает блок-указатель продолжения с текущей позиции.
+func (Codec) ReadContinuation(ctx context.Context, tape port.Tape) (port.Continuation, error) {
+	return ReadContinuation(ctx, tape)
 }

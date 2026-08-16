@@ -22,6 +22,7 @@ package testutil
 import (
 	"context"
 	"encoding/json"
+	"io"
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
@@ -32,7 +33,9 @@ import (
 // конкретной копии). ReadSession раздаёт сессии из очереди Queue
 // по порядку; когда очередь пуста — *domain.EmptyIndexError (конец
 // данных, как у реального декодера). ReadFiles используется, если
-// очередь пуста и задан непустой слайс.
+// очередь пуста и задан непустой слайс. Continuation-сценарий: при
+// ContOnCall > 0 вызов ReadSession с этим номером возвращает Cont
+// вместо сессии (лента с указателем продолжения).
 type FakeCodec struct {
 	ErrEncode    error
 	ErrDecode    error
@@ -45,6 +48,12 @@ type FakeCodec struct {
 	WroteHeaders []port.SessionHeader
 	WroteFiles   [][]domain.FileMeta
 	ReadCalls    int
+	Cont         *domain.ContinuationError // выдаётся ReadSession на вызове ContOnCall
+	ContOnCall   int                       // номер вызова ReadSession (с 1)
+	ContQueue    []port.Continuation       // очередь ReadContinuation; пусто — io.EOF
+	WroteConts   []port.Continuation       // записанное WriteContinuation
+	ErrWriteCont error
+	ErrReadCont  error
 }
 
 // EncodeLabel кодирует ярлык в JSON (без паддинга до BlockSize).
@@ -106,7 +115,9 @@ func (c *FakeCodec) WriteSession(
 }
 
 // ReadSession выдаёт очередную сессию из Queue; при пустой очереди —
-// ReadFiles, если заданы, иначе *domain.EmptyIndexError.
+// ReadFiles, если заданы, иначе *domain.EmptyIndexError. На вызове
+// ContOnCall (если задан) возвращает Cont — сценарий «кассета имеет
+// продолжение».
 func (c *FakeCodec) ReadSession(
 	ctx context.Context,
 	tape port.Tape,
@@ -122,6 +133,9 @@ func (c *FakeCodec) ReadSession(
 		c.ErrReadOnce = nil
 		return nil, err
 	}
+	if c.Cont != nil && c.ContOnCall > 0 && c.ReadCalls == c.ContOnCall {
+		return nil, c.Cont
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -134,6 +148,42 @@ func (c *FakeCodec) ReadSession(
 		return append([]domain.FileMeta(nil), c.ReadFiles...), nil
 	}
 	return nil, &domain.EmptyIndexError{}
+}
+
+// WriteContinuation запоминает указатель продолжения.
+func (c *FakeCodec) WriteContinuation(
+	ctx context.Context,
+	tape port.Tape,
+	cont port.Continuation,
+) error {
+	if c.ErrWriteCont != nil {
+		return c.ErrWriteCont
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.WroteConts = append(c.WroteConts, cont)
+	return nil
+}
+
+// ReadContinuation выдаёт указатель из очереди ContQueue; пустая
+// очередь — io.EOF (конец данных, как у реального декодера).
+func (c *FakeCodec) ReadContinuation(
+	ctx context.Context,
+	tape port.Tape,
+) (port.Continuation, error) {
+	if c.ErrReadCont != nil {
+		return port.Continuation{}, c.ErrReadCont
+	}
+	if err := ctx.Err(); err != nil {
+		return port.Continuation{}, err
+	}
+	if len(c.ContQueue) > 0 {
+		cont := c.ContQueue[0]
+		c.ContQueue = c.ContQueue[1:]
+		return cont, nil
+	}
+	return port.Continuation{}, io.EOF
 }
 
 // trimZeroBytes отрезает замыкающие нули.

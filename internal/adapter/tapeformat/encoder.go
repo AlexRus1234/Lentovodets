@@ -33,6 +33,8 @@ import (
 )
 
 // SessionIndex — JSON-индекс сессии; канон полей — docs/FORMAT.md §6.
+// Part/Continues — аддитивные поля spanning (omitempty: у не-частей и
+// старых лент не пишутся, wire-байты прежних сессий не меняются).
 type SessionIndex struct {
 	FormatVersion int                `json:"format_version"`
 	SessionNum    int32              `json:"session_num"`
@@ -40,6 +42,8 @@ type SessionIndex struct {
 	JobRunID      string             `json:"job_run_id"`
 	Timestamp     int64              `json:"timestamp"`
 	JobName       string             `json:"job_name"`
+	Part          int32              `json:"part,omitempty"`
+	Continues     string             `json:"continues,omitempty"`
 	Files         []domain.FileMeta  `json:"files"`
 }
 

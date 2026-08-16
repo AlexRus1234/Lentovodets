@@ -33,6 +33,19 @@ type SessionHeader struct {
 	JobRunID   string             // UUID запуска
 	Timestamp  int64              // Unix-секунды старта сессии
 	JobName    string             // имя задания
+	Part       int32              // номер части spanning-цепочки, с 1; 0 = 1 (старые ленты)
+	Continues  string             // UUID предыдущей кассеты цепочки; "" у части 1
+}
+
+// Continuation — указатель продолжения: блок в конце кассеты,
+// сообщающий, что цепочка сессий продолжается на следующей кассете
+// (имя, а не UUID: UUID следующей кассеты неизвестен до её
+// форматирования).
+type Continuation struct {
+	JobRunID     string // UUID запуска, к которому относится цепочка
+	SessionNum   int32  // номер сессии на ленте
+	Part         int32  // номер части, продолжающейся на следующей кассете
+	NextTapeName string // имя следующей кассеты цепочки
 }
 
 // TapeCodec — кодирование ярлыка кассеты и сессий ленты.
@@ -50,7 +63,19 @@ type TapeCodec interface {
 		files []domain.FileMeta, fs FileReader, prog ProgressReporter) error
 
 	// ReadSession читает сессию с текущей позиции ленты; dest == nil —
-	// режим проверки без записи на ФС.
+	// режим проверки без записи на ФС. Если на позиции сессии лежит
+	// блок-указатель продолжения — *domain.ContinuationError.
 	ReadSession(ctx context.Context, tape Tape, dest FileWriter,
 		prog ProgressReporter) ([]domain.FileMeta, error)
+
+	// WriteContinuation пишет блок-указатель продолжения в текущую
+	// позицию ленты (сразу после filemark'а tar завершённой части);
+	// filemark'и не ставит — закрывающую EOD-пару (новый EOD кассеты)
+	// пишет вызывающий.
+	WriteContinuation(ctx context.Context, tape Tape, c Continuation) error
+
+	// ReadContinuation читает блок-указатель с текущей позиции.
+	// Блока нет (конец данных / пустой блок) — io.EOF; чужой блок —
+	// *domain.NotContinuationError.
+	ReadContinuation(ctx context.Context, tape Tape) (Continuation, error)
 }
