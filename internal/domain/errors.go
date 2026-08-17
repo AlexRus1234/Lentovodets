@@ -257,6 +257,29 @@ func (e *ContinuationError) Is(target error) bool {
 	return ok
 }
 
+// ChainMismatchError — вставленная кассета не подходит цепочке
+// восстановления: имя ярлыка не совпало с ожидаемым из указателя
+// продолжения либо обратная ссылка continues индекса первой сессии
+// не совпала с UUID предыдущей кассеты. Защита от вставленной «не
+// той» кассеты: ошибка возвращается сразу, до восстановления данных;
+// повторный запуск после вставки верной кассеты восстановит
+// пропущенное.
+type ChainMismatchError struct {
+	Expected string // ожидавшееся имя кассеты или UUID предыдущей
+	Got      string // фактическое имя ярлыка или ссылка continues
+}
+
+// Error реализует интерфейс error.
+func (e *ChainMismatchError) Error() string {
+	return fmt.Sprintf("кассета не подходит для цепочки: ожидалось %q, найдено %q", e.Expected, e.Got)
+}
+
+// Is поддерживает errors.Is(err, &ChainMismatchError{}).
+func (e *ChainMismatchError) Is(target error) bool {
+	_, ok := target.(*ChainMismatchError)
+	return ok
+}
+
 // NotContinuationError — блок на позиции указателя продолжения не
 // является continuation-блоком: битый JSON или чужой блок без
 // kind:"continuation".

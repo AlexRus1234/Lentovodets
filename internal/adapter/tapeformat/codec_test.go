@@ -18,6 +18,7 @@ package tapeformat_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -98,4 +99,65 @@ func TestCodec_SessionRoundtrip(t *testing.T) {
 	if len(got) != 2 || got[1].Path != "/etc/hosts" {
 		t.Fatalf("прочитанные файлы: %+v", got)
 	}
+}
+
+func TestCodec_ReadHeader(t *testing.T) {
+	codec := tapeformat.NewCodec()
+	ctx := context.Background()
+
+	t.Run("заголовок части с continues", func(t *testing.T) {
+		tape := testutil.NewFakeTape()
+		fs := testutil.NewMapFS(map[string]string{"a": "x"})
+		header := port.SessionHeader{
+			SessionNum: 1, Type: domain.SessionFull,
+			JobRunID: "run-9", Timestamp: 1700000042, JobName: "media",
+			Part: 2, Continues: "uuid-prev",
+		}
+		files := []domain.FileMeta{{
+			Path: "/a", Size: 1, ModTime: 1,
+			Hash:  fmt.Sprintf("%016x", xxhash.Sum64String("x")),
+			State: domain.StateAdded,
+		}}
+		if err := codec.WriteSession(ctx, tape, header, files, fs, nil); err != nil {
+			t.Fatalf("WriteSession: %v", err)
+		}
+		if err := tape.Rewind(ctx); err != nil {
+			t.Fatalf("Rewind: %v", err)
+		}
+		got, err := codec.ReadHeader(ctx, tape)
+		if err != nil {
+			t.Fatalf("ReadHeader: %v", err)
+		}
+		want := header // Files читателем не заполняются
+		if got != want {
+			t.Fatalf("ReadHeader: %+v; want %+v", got, want)
+		}
+	})
+
+	t.Run("пустой индекс", func(t *testing.T) {
+		tape := testutil.NewFakeTape()
+		if err := tape.WriteEOF(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := codec.ReadHeader(ctx, tape); !errors.Is(err, &domain.EmptyIndexError{}) {
+			t.Fatalf("ReadHeader: %v; want EmptyIndexError", err)
+		}
+	})
+
+	t.Run("указатель продолжения", func(t *testing.T) {
+		tape := testutil.NewFakeTape()
+		if err := tapeformat.WriteContinuation(ctx, tape, port.Continuation{
+			JobRunID: "run", SessionNum: 2, Part: 2, NextTapeName: "T2",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tape.Rewind(ctx); err != nil {
+			t.Fatal(err)
+		}
+		_, err := codec.ReadHeader(ctx, tape)
+		var cont *domain.ContinuationError
+		if !errors.As(err, &cont) || cont.NextTapeName != "T2" {
+			t.Fatalf("ReadHeader: %v; want ContinuationError", err)
+		}
+	})
 }

@@ -76,6 +76,12 @@ func (Codec) ReadSession(
 	return ReadSession(ctx, tape, dest, prog)
 }
 
+// ReadHeader читает заголовок сессии (индекс без tar) с текущей
+// позиции ленты.
+func (Codec) ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader, error) {
+	return ReadHeader(ctx, tape)
+}
+
 // WriteContinuation пишет блок-указатель продолжения и filemark EOD.
 func (Codec) WriteContinuation(ctx context.Context, tape port.Tape, c port.Continuation) error {
 	return WriteContinuation(ctx, tape, c)

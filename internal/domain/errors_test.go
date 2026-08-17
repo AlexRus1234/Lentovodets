@@ -118,6 +118,12 @@ func TestTypedErrors(t *testing.T) {
 			"spanning требует интерактивной смены кассет или демона",
 			&domain.TapeChangerError{},
 		},
+		{
+			"кассета не подходит цепочке",
+			&domain.ChainMismatchError{Expected: "media-014", Got: "media-099"},
+			`ожидалось "media-014", найдено "media-099"`,
+			&domain.ChainMismatchError{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,5 +176,14 @@ func TestErrorsAsExtractsDetails(t *testing.T) {
 	}
 	if cont.NextTapeName != "media-014" || cont.Part != 2 {
 		t.Errorf("ContinuationError = %+v, want {NextTapeName:media-014 Part:2}", cont)
+	}
+
+	var mm *domain.ChainMismatchError
+	if !errors.As(fmt.Errorf("сверка: %w",
+		&domain.ChainMismatchError{Expected: "media-014", Got: "media-099"}), &mm) {
+		t.Fatal("errors.As не извлёк ChainMismatchError")
+	}
+	if mm.Expected != "media-014" || mm.Got != "media-099" {
+		t.Errorf("ChainMismatchError = %+v, want {Expected:media-014 Got:media-099}", mm)
 	}
 }

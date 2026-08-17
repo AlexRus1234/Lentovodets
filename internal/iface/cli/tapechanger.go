@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"lentovodec/internal/domain"
@@ -50,13 +51,7 @@ type stdinChanger struct {
 
 // CloseTape извлекает и закрывает текущую ленту.
 func (c *stdinChanger) CloseTape(ctx context.Context, tape port.Tape) error {
-	if err := tape.Eject(ctx); err != nil {
-		return fmt.Errorf("извлечение кассеты: %w", err)
-	}
-	if err := tape.Close(); err != nil {
-		return fmt.Errorf("закрытие ленты: %w", err)
-	}
-	return nil
+	return ejectClose(ctx, tape)
 }
 
 // RequestNext спрашивает имя кассеты (если нужно), открывает
@@ -121,4 +116,87 @@ func (c *stdinChanger) askName(req port.NextTapeRequest, suggested string) (stri
 		return suggested, nil
 	}
 	return line, nil
+}
+
+// restoreChanger — port.TapeChanger для чтения цепочки кассет
+// (restore full и tape readtest): оператора просят вставить
+// конкретную кассету — её имя известно из указателя продолжения,
+// поэтому ввод имени не нужен. Кассета НЕ форматируется: данные
+// на ней уже записаны; ярлык читается и возвращается для сверки
+// цепочки (usecase проверит имя и обратную ссылку continues).
+type restoreChanger struct {
+	deps  Deps
+	cfg   ConfigFile
+	codec port.TapeCodec
+}
+
+// CloseTape извлекает и закрывает прочитанную ленту.
+func (c *restoreChanger) CloseTape(ctx context.Context, tape port.Tape) error {
+	return ejectClose(ctx, tape)
+}
+
+// RequestNext ждёт, пока оператор вставит кассету цепочки (Enter),
+// открывает устройство и читает ярлык вставленной кассеты.
+func (c *restoreChanger) RequestNext(
+	ctx context.Context,
+	req port.NextTapeRequest,
+) (port.Tape, domain.TapeLabel, error) {
+	if !c.deps.IsInteractive() {
+		return nil, domain.TapeLabel{}, fmt.Errorf(
+			"нужна кассета %s (часть %d), но ввод не интерактивен; вставьте её и перезапустите",
+			req.NextTapeName, req.Part)
+	}
+	fmt.Fprintf(c.deps.Stderr, "Кассета %s прочитана. Вставьте кассету %s (часть %d) и нажмите Enter: ",
+		req.FinishedTape, req.NextTapeName, req.Part)
+	if _, err := readLine(bufio.NewScanner(c.deps.Stdin)); err != nil {
+		return nil, domain.TapeLabel{}, fmt.Errorf("ожидание кассеты %s: %w", req.NextTapeName, err)
+	}
+	tape, err := c.deps.OpenTape(c.cfg.Device())
+	if err != nil {
+		return nil, domain.TapeLabel{}, err
+	}
+	label, err := readTapeLabel(ctx, tape, c.codec)
+	if err != nil {
+		if cerr := tape.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("закрытие ленты: %w", cerr))
+		}
+		return nil, domain.TapeLabel{}, err
+	}
+	return tape, label, nil
+}
+
+// SuggestNextName неприменим: имя следующей кассеты известно из
+// указателя продолжения на ленте.
+func (c *restoreChanger) SuggestNextName(context.Context, string) (string, error) {
+	return "", errors.New("restore: имя кассеты цепочки известно из указателя продолжения")
+}
+
+// ejectClose извлекает ленту и закрывает устройство.
+func ejectClose(ctx context.Context, tape port.Tape) error {
+	if err := tape.Eject(ctx); err != nil {
+		return fmt.Errorf("извлечение кассеты: %w", err)
+	}
+	if err := tape.Close(); err != nil {
+		return fmt.Errorf("закрытие ленты: %w", err)
+	}
+	return nil
+}
+
+// readTapeLabel читает и разбирает ярлык установленной кассеты.
+func readTapeLabel(ctx context.Context, tape port.Tape, codec port.TapeCodec) (domain.TapeLabel, error) {
+	if err := tape.Rewind(ctx); err != nil {
+		return domain.TapeLabel{}, fmt.Errorf("перемотка: %w", err)
+	}
+	block, err := tape.ReadBlock(ctx)
+	if errors.Is(err, io.EOF) {
+		return domain.TapeLabel{}, fmt.Errorf("чтение ярлыка: %w", &domain.BlankTapeError{})
+	}
+	if err != nil {
+		return domain.TapeLabel{}, fmt.Errorf("чтение ярлыка: %w", err)
+	}
+	label, err := codec.DecodeLabel(block)
+	if err != nil {
+		return domain.TapeLabel{}, fmt.Errorf("разбор ярлыка: %w", err)
+	}
+	return label, nil
 }

@@ -55,7 +55,7 @@ func (s *Server) handleTapeInfo(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Warn("web: закрытие ленты после info", "error", err.Error())
 		}
 	}()
-	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log)
+	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
 	info, err := uc.TapeInfo(r.Context())
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error(), "tape_info")
@@ -85,7 +85,7 @@ func (s *Server) handleTapeEject(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Warn("web: закрытие ленты после eject", "error", err.Error())
 		}
 	}()
-	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log)
+	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
 	if err := uc.Eject(r.Context()); err != nil {
 		writeErr(w, statusFor(err), err.Error(), "tape_eject")
 		return

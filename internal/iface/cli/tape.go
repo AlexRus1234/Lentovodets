@@ -87,13 +87,20 @@ func newTapeReadtestCmd(deps Deps, flags *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rt.runLocal(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
-				uc := catalog.New(cat, tape, deps.Codec, nil, rt.logger())
-				n, err := uc.ReadTest(ctx)
+			return rt.runLocalTape(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+				uc := catalog.New(cat, tape, deps.Codec, nil, rt.logger(),
+					restoreChangerFor(deps, rt))
+				reports, err := uc.ReadTest(ctx)
 				if err != nil {
 					return err
 				}
-				rt.printf("проверено сессий: %d\n", n)
+				total := 0
+				for _, rep := range reports {
+					rt.printf("кассета %s: сессий %d, файлов %d (%s)\n",
+						rep.Name, rep.Sessions, rep.Files, humanSize(rep.Bytes))
+					total += rep.Sessions
+				}
+				rt.printf("проверено сессий: %d\n", total)
 				return nil
 			})
 		},

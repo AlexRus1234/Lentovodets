@@ -181,14 +181,15 @@ func (h *harness) restoreUC() *restore.UseCase {
 
 // restoreUCTo собирает use case восстановления в каталог dest (как CLI
 // restore --dest: перенос путей индекса под dest через destfs).
+// changer — nil: цепочечные сценарии придут сессией 8 плана spanning.
 func (h *harness) restoreUCTo(dest string) *restore.UseCase {
 	return restore.New(h.tape, h.codec, h.cat, destfs.Wrap(h.fs, dest),
-		nil, testutil.NoopLogger())
+		nil, testutil.NoopLogger(), nil)
 }
 
 // catalogUC собирает каталожный use case с доступом к ленте.
 func (h *harness) catalogUC() *catalog.UseCase {
-	return catalog.New(h.cat, h.tape, h.codec, nil, testutil.NoopLogger())
+	return catalog.New(h.cat, h.tape, h.codec, nil, testutil.NoopLogger(), nil)
 }
 
 // writeFile создаёт файл root/rel (каталоги по пути) с содержимым

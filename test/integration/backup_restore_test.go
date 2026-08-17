@@ -109,12 +109,12 @@ func TestBackupRestore_FormatBackupEjectRestoreFull(t *testing.T) {
 	}
 
 	// readtest: вся лента читается, хеши сходятся, на ФС не пишется
-	checked, err := h.catalogUC().ReadTest(ctx)
+	reports, err := h.catalogUC().ReadTest(ctx)
 	if err != nil {
 		t.Fatalf("readtest: %v", err)
 	}
-	if checked != 1 {
-		t.Fatalf("readtest: проверено сессий %d, хочу 1", checked)
+	if len(reports) != 1 || reports[0].Sessions != 1 {
+		t.Fatalf("readtest: отчёт %+v, хочу 1 кассету с 1 сессией", reports)
 	}
 
 	// restore full в отдельный каталог

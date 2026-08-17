@@ -28,27 +28,35 @@ import (
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
+	"lentovodec/internal/usecase/restore"
 )
 
 // UseCase — тонкая композиция портов: вся логика в адаптерах.
 type UseCase struct {
-	cat   port.Catalog
-	tape  port.Tape
-	codec port.TapeCodec
-	prog  port.ProgressReporter // nil допустим
-	log   *slog.Logger
+	cat     port.Catalog
+	tape    port.Tape
+	codec   port.TapeCodec
+	prog    port.ProgressReporter // nil допустим
+	log     *slog.Logger
+	changer port.TapeChanger // nil — цепочки кассет не следуются
 }
 
 // New собирает use case; tape/codec могут быть nil для чисто
-// каталожных сценариев (daemon без устройства).
+// каталожных сценариев (daemon без устройства). changer может быть
+// nil: тогда readtest на кассете с указателем продолжения
+// завершается Warn'ом «вставьте кассету и перезапустите».
 func New(
 	cat port.Catalog,
 	tape port.Tape,
 	codec port.TapeCodec,
 	prog port.ProgressReporter,
 	log *slog.Logger,
+	changer port.TapeChanger,
 ) *UseCase {
-	return &UseCase{cat: cat, tape: tape, codec: codec, prog: prog, log: log}
+	return &UseCase{
+		cat: cat, tape: tape, codec: codec,
+		prog: prog, log: log, changer: changer,
+	}
 }
 
 // ListTapes — все кассеты каталога.
@@ -129,50 +137,106 @@ func (uc *UseCase) Eject(ctx context.Context) error {
 	return nil
 }
 
-// ReadTest прогоняет всю ленту в режиме проверки: чтение всех сессий
-// с сверкой хешей без записи на ФС. Возвращает число проверенных
-// сессий; повреждённые — ошибка.
-func (uc *UseCase) ReadTest(ctx context.Context) (int, error) {
+// TapeReport — итог проверки одной кассеты цепочки readtest.
+type TapeReport struct {
+	Name     string // имя кассеты из ярлыка
+	Sessions int    // сессий проверено
+	Files    int    // файлов в проверенных сессиях (без каталогов/tombstone'ов)
+	Bytes    int64  // суммарный размер проверенных файлов
+}
+
+// ReadTest прогоняет ленту в режиме проверки: чтение всех сессий
+// с сверкой хешей без записи на ФС. Повреждённая сессия — ошибка.
+// Кассета с указателем продолжения — часть spanning-цепочки: при
+// заданном changer проверка следует цепочке (смена кассеты со
+// сверкой, ChainFollower), без changer'а — Warn «вставьте кассету»
+// и конец. Возвращает отчёт по каждой кассете цепочки.
+func (uc *UseCase) ReadTest(ctx context.Context) ([]TapeReport, error) {
 	if err := uc.tape.Rewind(ctx); err != nil {
-		return 0, fmt.Errorf("readtest: перемотка: %w", err)
+		return nil, fmt.Errorf("readtest: перемотка: %w", err)
 	}
-	if _, err := uc.readLabel(ctx); err != nil {
-		return 0, err
+	label, err := uc.readLabel(ctx)
+	if err != nil {
+		return nil, err
 	}
 	// Позиция — на filemark'е ярлыка; переводим на индекс сессии 1
 	// (FORMAT §9: чтение сессий подряд начинается после файла ярлыка).
 	if err := uc.tape.ForwardFilemarks(ctx, 1); err != nil {
-		return 0, fmt.Errorf("readtest: пропуск ярлыка: %w", err)
+		return nil, fmt.Errorf("readtest: пропуск ярлыка: %w", err)
 	}
-	checked := 0
+	cur := restore.TapeState{Tape: uc.tape, Label: label}
+	reports := []TapeReport{{Name: label.Name}}
+	rep := &reports[0]
 	for {
 		if err := ctx.Err(); err != nil {
-			return checked, fmt.Errorf("readtest: %w", err)
+			return reports, fmt.Errorf("readtest: %w", err)
 		}
-		_, err := uc.codec.ReadSession(ctx, uc.tape, nil, uc.prog)
+		files, err := uc.codec.ReadSession(ctx, cur.Tape, nil, uc.prog)
 		if isEndOfSessions(err) {
 			break
 		}
 		var cont *domain.ContinuationError
 		if errors.As(err, &cont) {
-			// Кассета кончилась, цепочка продолжается на следующей;
-			// следование по указателю — сессия 6 плана spanning.
-			uc.log.Warn("найден указатель продолжения; следование по цепочке кассет пока не реализовано",
-				slog.String("next_tape", cont.NextTapeName),
-				slog.String("job_run_id", cont.JobRunID),
-				slog.Int("session_num", int(cont.SessionNum)),
-				slog.Int("part", int(cont.Part)))
-			break
+			if uc.changer == nil {
+				uc.log.Warn("кассета имеет продолжение: вставьте следующую и перезапустите readtest",
+					slog.String("next_tape", cont.NextTapeName),
+					slog.String("job_run_id", cont.JobRunID),
+					slog.Int("session_num", int(cont.SessionNum)),
+					slog.Int("part", int(cont.Part)))
+				break
+			}
+			next, ferr := uc.followChain(ctx, cur, cont)
+			if ferr != nil {
+				return reports, fmt.Errorf("readtest: %w", ferr)
+			}
+			cur = next
+			reports = append(reports, TapeReport{Name: cur.Label.Name})
+			rep = &reports[len(reports)-1]
+			continue
 		}
 		if err != nil {
-			return checked, fmt.Errorf("readtest: сессия %d: %w", checked+1, err)
+			return reports, fmt.Errorf("readtest: сессия %d: %w", rep.Sessions+1, err)
 		}
-		checked++
+		rep.Sessions++
+		rep.Files += countCheckedFiles(files)
+		rep.Bytes += checkedBytes(files)
 	}
 	if uc.prog != nil {
 		uc.prog.Done()
 	}
-	return checked, nil
+	return reports, nil
+}
+
+// followChain делегирует смену кассеты ChainFollower (общий с
+// RestoreFull) с зависимостями use case'а.
+func (uc *UseCase) followChain(ctx context.Context, cur restore.TapeState, cont *domain.ContinuationError) (restore.TapeState, error) {
+	f := &restore.ChainFollower{
+		Changer: uc.changer, Codec: uc.codec, Cat: uc.cat,
+		Prog: uc.prog, Log: uc.log,
+	}
+	return f.Follow(ctx, cur, cont)
+}
+
+// countCheckedFiles считает файлы (без каталогов и tombstone'ов).
+func countCheckedFiles(files []domain.FileMeta) int {
+	n := 0
+	for _, fm := range files {
+		if !fm.IsDir && !fm.IsDeleted() {
+			n++
+		}
+	}
+	return n
+}
+
+// checkedBytes суммирует размеры файлов (без каталогов и tombstone'ов).
+func checkedBytes(files []domain.FileMeta) int64 {
+	var n int64
+	for _, fm := range files {
+		if !fm.IsDir && !fm.IsDeleted() {
+			n += fm.Size
+		}
+	}
+	return n
 }
 
 // readLabel читает ярлык с BOT.

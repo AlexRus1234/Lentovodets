@@ -160,16 +160,16 @@ func TestHardware_FormatBackupRestoreFull(t *testing.T) {
 		res.Session.Num, res.Session.Type, res.Stats.Scanned, res.Stats.Bytes)
 
 	t.Log("readtest (полное чтение ленты со сверкой хешей)...")
-	checked, err := catalog.New(cat, tp, codec, nil, testutil.NoopLogger()).ReadTest(ctx)
+	reports, err := catalog.New(cat, tp, codec, nil, testutil.NoopLogger(), nil).ReadTest(ctx)
 	if err != nil {
 		t.Fatalf("readtest: %v", err)
 	}
-	if checked != 1 {
-		t.Fatalf("readtest: сессий %d, хочу 1", checked)
+	if len(reports) != 1 || reports[0].Sessions != 1 {
+		t.Fatalf("readtest: отчёт %+v, хочу 1 кассету с 1 сессией", reports)
 	}
 
 	t.Log("restore full...")
-	st, err := restore.New(tp, codec, cat, destfs.Wrap(fsys, dest), nil, testutil.NoopLogger()).
+	st, err := restore.New(tp, codec, cat, destfs.Wrap(fsys, dest), nil, testutil.NoopLogger(), nil).
 		Full(ctx)
 	if err != nil {
 		t.Fatalf("restore: %v", err)

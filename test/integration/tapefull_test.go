@@ -85,8 +85,8 @@ func TestTapeFull_RollbackAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readtest после сбоя: %v (грязный хвост не откачен?)", err)
 	}
-	if checked != 0 {
-		t.Fatalf("readtest после сбоя: сессий %d; want 0", checked)
+	if len(checked) != 1 || checked[0].Sessions != 0 {
+		t.Fatalf("readtest после сбоя: отчёт %+v; want 1 кассета, 0 сессий", checked)
 	}
 
 	// Меньший бекап дозаписывается на восстановленную ленту.
@@ -108,8 +108,8 @@ func TestTapeFull_RollbackAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readtest после дозаписи: %v", err)
 	}
-	if checked != 1 {
-		t.Fatalf("readtest после дозаписи: сессий %d; want 1", checked)
+	if len(checked) != 1 || checked[0].Sessions != 1 {
+		t.Fatalf("readtest после дозаписи: отчёт %+v; want 1 кассета, 1 сессия", checked)
 	}
 
 	// Restore full восстанавливает всё дерево побайтово.

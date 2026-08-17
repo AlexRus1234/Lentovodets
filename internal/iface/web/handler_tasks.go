@@ -101,7 +101,8 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 			fs = destfs.Wrap(s.deps.FS, dest)
 		}
 		uc := restore.New(tape, s.deps.Codec, s.deps.Catalog, fs,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log)
+			NewTaskProgress(task, s.deps.Clock), s.deps.Log,
+			nil) // changer: pause/resume демона — сессия 7 плана spanning
 		if len(paths) > 0 {
 			_, err = uc.Smart(s.ctx, paths)
 		} else {

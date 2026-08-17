@@ -38,6 +38,7 @@ type harness struct {
 	uc          *restore.UseCase
 	prog        *progRecorder
 	selectiveID int64
+	changer     *testutil.FuncChanger
 }
 
 // recTape запоминает аргументы ForwardFilemarks и инъектирует сбои.
@@ -144,8 +145,14 @@ func newHarness(t *testing.T) *harness {
 		dest:  testutil.NewMapFS(nil),
 		prog:  &progRecorder{},
 	}
-	h.uc = restore.New(tape, codec, cat, h.dest, h.prog, testutil.NoopLogger())
+	h.uc = restore.New(tape, codec, cat, h.dest, h.prog, testutil.NoopLogger(), nil)
 	return h
+}
+
+// setChanger подключает сменщик кассет цепочки и пересобирает use case.
+func (h *harness) setChanger(ch *testutil.FuncChanger) {
+	h.changer = ch
+	h.uc = restore.New(h.tape, h.codec, h.cat, h.dest, h.prog, testutil.NoopLogger(), ch)
 }
 
 func TestRestore_Full(t *testing.T) {
@@ -372,7 +379,7 @@ func TestRestore_SmartEmptyPaths(t *testing.T) {
 func TestRestore_BlankTape(t *testing.T) {
 	h := newHarness(t)
 	h.tape = &recTape{FakeTape: testutil.NewFakeTape()}
-	h.uc = restore.New(h.tape, h.codec, h.cat, h.dest, nil, testutil.NoopLogger())
+	h.uc = restore.New(h.tape, h.codec, h.cat, h.dest, nil, testutil.NoopLogger(), nil)
 	if _, err := h.uc.Full(context.Background()); !errors.Is(err, &domain.BlankTapeError{}) {
 		t.Fatalf("Full: %v; want BlankTapeError", err)
 	}
@@ -415,7 +422,7 @@ func TestRestore_ErrorPaths(t *testing.T) {
 			prep: func(t *testing.T, h *harness) {
 				id := h.addSession(t, 1, []domain.FileMeta{meta("/a")})
 				h.selectiveID = id
-				h.uc = restore.New(h.tape, h.codec, &failCat{listSessions: boom}, h.dest, nil, testutil.NoopLogger())
+				h.uc = restore.New(h.tape, h.codec, &failCat{listSessions: boom}, h.dest, nil, testutil.NoopLogger(), nil)
 			},
 			call: func(h *harness) error {
 				_, err := h.uc.Selective(context.Background(), h.selectiveID, nil)
@@ -465,7 +472,7 @@ func TestRestore_ErrorPaths(t *testing.T) {
 		{
 			name: "smart copies query fails",
 			prep: func(t *testing.T, h *harness) {
-				h.uc = restore.New(h.tape, h.codec, &failCat{copies: boom}, h.dest, nil, testutil.NoopLogger())
+				h.uc = restore.New(h.tape, h.codec, &failCat{copies: boom}, h.dest, nil, testutil.NoopLogger(), nil)
 			},
 			call: func(h *harness) error {
 				_, err := h.uc.Smart(context.Background(), []string{"/a"})
@@ -503,7 +510,7 @@ func TestRestore_FullForeignLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.tape = foreign
-	h.uc = restore.New(foreign, h.codec, h.cat, h.dest, nil, testutil.NoopLogger())
+	h.uc = restore.New(foreign, h.codec, h.cat, h.dest, nil, testutil.NoopLogger(), nil)
 	if _, err := h.uc.Full(context.Background()); !errors.Is(err, &domain.ForeignFormatError{}) {
 		t.Fatalf("Full: %v; want ForeignFormatError", err)
 	}
@@ -532,7 +539,7 @@ func TestRestore_FullSkipHitsTapeEnd(t *testing.T) {
 	}
 	cat := testutil.NewMemCatalog()
 	_ = cat.RegisterTape(ctx, label.UUID, label.Name, 0)
-	uc := restore.New(tape, codec, cat, testutil.NewMapFS(nil), nil, testutil.NoopLogger())
+	uc := restore.New(tape, codec, cat, testutil.NewMapFS(nil), nil, testutil.NoopLogger(), nil)
 
 	st, err := uc.Full(ctx)
 	if err != nil {
@@ -557,9 +564,10 @@ func TestRestore_TombstoneRemoveMissingFile(t *testing.T) {
 
 // failCat — каталог с инъекцией сбоев.
 type failCat struct {
-	testutil.MemCatalog
+	*testutil.MemCatalog
 	listSessions error
 	copies       error
+	getTape      error
 }
 
 func (c *failCat) ListSessions(ctx context.Context, tapeUUID string) ([]domain.Session, error) {
@@ -574,4 +582,11 @@ func (c *failCat) GetAllFileCopies(ctx context.Context, path string) ([]port.Fil
 		return nil, c.copies
 	}
 	return c.MemCatalog.GetAllFileCopies(ctx, path)
+}
+
+func (c *failCat) GetTapeByUUID(ctx context.Context, uuid string) (port.TapeRecord, error) {
+	if c.getTape != nil {
+		return port.TapeRecord{}, c.getTape
+	}
+	return c.MemCatalog.GetTapeByUUID(ctx, uuid)
 }

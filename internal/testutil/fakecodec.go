@@ -54,11 +54,16 @@ type FakeCodec struct {
 	ReadCalls    int
 	WriteCalls   int
 	Cont         *domain.ContinuationError // выдаётся ReadSession на вызове ContOnCall
-	ContOnCall   int                       // номер вызова ReadSession (с 1)
+	ContOnCall   int                       // номер вызова ReadSession (с 1) для Cont
 	ContQueue    []port.Continuation       // очередь ReadContinuation; пусто — io.EOF
 	WroteConts   []port.Continuation       // записанное WriteContinuation
 	ErrWriteCont error
 	ErrReadCont  error
+
+	// Headers — очередь заголовков ReadHeader (сверка цепочки кассет:
+	// заголовок сессии 1 новой кассеты); пусто — EmptyIndexError.
+	Headers     []port.SessionHeader
+	HeaderCalls int
 }
 
 // EncodeLabel кодирует ярлык в JSON (без паддинга до BlockSize).
@@ -159,6 +164,21 @@ func (c *FakeCodec) ReadSession(
 		return append([]domain.FileMeta(nil), c.ReadFiles...), nil
 	}
 	return nil, &domain.EmptyIndexError{}
+}
+
+// ReadHeader выдаёт очередной заголовок из Headers; пустая очередь —
+// *domain.EmptyIndexError (пустой индекс, как у реального декодера).
+func (c *FakeCodec) ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader, error) {
+	c.HeaderCalls++
+	if err := ctx.Err(); err != nil {
+		return port.SessionHeader{}, err
+	}
+	if len(c.Headers) > 0 {
+		h := c.Headers[0]
+		c.Headers = c.Headers[1:]
+		return h, nil
+	}
+	return port.SessionHeader{}, &domain.EmptyIndexError{}
 }
 
 // WriteContinuation запоминает указатель продолжения.

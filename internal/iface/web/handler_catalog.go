@@ -66,7 +66,7 @@ type FileCopyJSON struct {
 
 // catUC — каталожный use case без ленты (для запросов к БД).
 func (s *Server) catUC() *catalog.UseCase {
-	return catalog.New(s.deps.Catalog, nil, nil, nil, s.deps.Log)
+	return catalog.New(s.deps.Catalog, nil, nil, nil, s.deps.Log, nil)
 }
 
 // handleCatalogTapes — GET /api/catalog/tapes.

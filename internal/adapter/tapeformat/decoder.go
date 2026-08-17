@@ -65,6 +65,29 @@ func ReadSession(
 	return idx.Files, nil
 }
 
+// ReadHeader читает заголовок сессии с текущей позиции ленты:
+// JSON-индекс без списка файлов, tar-поток не читается. После вызова
+// позиция — за filemark'ом индекса (как после индексной фазы
+// ReadSession). Назначение — сверка цепочки кассет: обратная ссылка
+// continues первой сессии новой кассеты проверяется до восстановления
+// её данных. Ошибки те же, что у ReadSession на позиции индекса
+// (EmptyIndexError, ContinuationError, ...).
+func ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader, error) {
+	idx, err := readIndex(ctx, tape)
+	if err != nil {
+		return port.SessionHeader{}, err
+	}
+	return port.SessionHeader{
+		SessionNum: idx.SessionNum,
+		Type:       idx.Type,
+		JobRunID:   idx.JobRunID,
+		Timestamp:  idx.Timestamp,
+		JobName:    idx.JobName,
+		Part:       idx.Part,
+		Continues:  idx.Continues,
+	}, nil
+}
+
 // readIndex читает сегмент индекса (блоки до filemark'а) и разбирает JSON.
 // На позиции сессии может лежать блок-указатель продолжения — это
 // *domain.ContinuationError (кассета кончилась, есть продолжение).

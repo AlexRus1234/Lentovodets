@@ -15,7 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Команда restore: восстановление с ленты (local-режим). --paths →
-// smart-восстановление, иначе — полное восстановление ленты.
+// smart-восстановление, иначе — полное восстановление ленты (по
+// цепочке кассет с интерактивной сменой).
 
 package cli
 
@@ -51,12 +52,13 @@ func newRestoreCmd(deps Deps, flags *globalFlags) *cobra.Command {
 			if original {
 				dest = ""
 			}
-			return rt.runLocal(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+			return rt.runLocalTape(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
 				fs := deps.FS
 				if dest != "" {
 					fs = destfs.Wrap(deps.FS, dest)
 				}
-				uc := restore.New(tape, deps.Codec, cat, fs, nil, rt.logger())
+				uc := restore.New(tape, deps.Codec, cat, fs, nil, rt.logger(),
+					restoreChangerFor(deps, rt))
 				var st restore.Stats
 				if len(paths) > 0 {
 					st, err = uc.Smart(ctx, paths)
@@ -76,4 +78,15 @@ func newRestoreCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&dest, "dest", "", "восстановить в указанный каталог, а не по исходным путям")
 	cmd.Flags().BoolVar(&original, "original", false, "восстановить по исходным путям из индекса (игнорирует --dest)")
 	return cmd
+}
+
+// restoreChangerFor — сменщик кассет цепочки для restore/readtest:
+// только при интерактивном вводе (промпт оператору); в скриптах —
+// nil, и указатель продолжения завершает операцию Warn'ом
+// «вставьте кассету и перезапустите».
+func restoreChangerFor(deps Deps, rt *runtime) port.TapeChanger {
+	if deps.IsInteractive == nil || !deps.IsInteractive() {
+		return nil
+	}
+	return &restoreChanger{deps: deps, cfg: rt.cfg, codec: deps.Codec}
 }

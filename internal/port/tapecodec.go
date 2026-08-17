@@ -68,6 +68,13 @@ type TapeCodec interface {
 	ReadSession(ctx context.Context, tape Tape, dest FileWriter,
 		prog ProgressReporter) ([]domain.FileMeta, error)
 
+	// ReadHeader читает заголовок сессии (индекс без файлов и без
+	// tar-потока) с текущей позиции ленты; после вызова позиция — за
+	// filemark'ом индекса. Нужен для сверки цепочки кассет: обратная
+	// ссылка continues первой сессии новой кассеты проверяется до
+	// восстановления её данных.
+	ReadHeader(ctx context.Context, tape Tape) (SessionHeader, error)
+
 	// WriteContinuation пишет блок-указатель продолжения в текущую
 	// позицию ленты (сразу после filemark'а tar завершённой части);
 	// filemark'и не ставит — закрывающую EOD-пару (новый EOD кассеты)

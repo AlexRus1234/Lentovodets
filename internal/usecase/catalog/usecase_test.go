@@ -28,7 +28,12 @@ import (
 )
 
 func newCatalogUC(cat port.Catalog, tape port.Tape, codec *testutil.FakeCodec) *catalog.UseCase {
-	return catalog.New(cat, tape, codec, nil, testutil.NoopLogger())
+	return catalog.New(cat, tape, codec, nil, testutil.NoopLogger(), nil)
+}
+
+// newChainCatalogUC — use case со сменщиком кассет цепочки.
+func newChainCatalogUC(cat port.Catalog, tape port.Tape, codec *testutil.FakeCodec, ch *testutil.FuncChanger) *catalog.UseCase {
+	return catalog.New(cat, tape, codec, nil, testutil.NoopLogger(), ch)
 }
 
 func seedCatalog(t *testing.T) (*testutil.MemCatalog, int64, int64) {
@@ -202,17 +207,21 @@ func TestCatalog_ReadTest(t *testing.T) {
 	codec := &testutil.FakeCodec{}
 	tape := labeledTape(t, codec)
 	codec.Queue = [][]domain.FileMeta{
-		{{Path: "/a", Hash: "h", State: domain.StateAdded}},
-		{{Path: "/b", Hash: "h", State: domain.StateAdded}},
+		{{Path: "/a", Hash: "h", State: domain.StateAdded, Size: 10}},
+		{{Path: "/b", Hash: "h", State: domain.StateAdded, Size: 20}},
 	}
 	uc := newCatalogUC(cat, tape, codec)
 
-	n, err := uc.ReadTest(context.Background())
+	reports, err := uc.ReadTest(context.Background())
 	if err != nil {
 		t.Fatalf("ReadTest: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("проверено %d сессий; want 2", n)
+	if len(reports) != 1 {
+		t.Fatalf("отчётов %d; want 1", len(reports))
+	}
+	r := reports[0]
+	if r.Name != "t-1" || r.Sessions != 2 || r.Files != 2 || r.Bytes != 30 {
+		t.Fatalf("отчёт: %+v", r)
 	}
 }
 
@@ -246,8 +255,8 @@ func TestCatalog_ReadTestContinuationStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadTest: %v; want nil (продолжение — не ошибка)", err)
 	}
-	if n != 1 {
-		t.Fatalf("проверено %d сессий; want 1", n)
+	if len(n) != 1 || n[0].Sessions != 1 {
+		t.Fatalf("проверено %+v; want 1 кассета, 1 сессия", n)
 	}
 }
 
@@ -451,7 +460,7 @@ func TestCatalog_TapeOperationErrors(t *testing.T) {
 		tape := labeledTape(t, codec)
 		// лента, игнорирующая ctx в Rewind/ReadBlock: отмена сработает
 		// в цикле ReadTest
-		uc := catalog.New(cat, &ctxFreeTape{tape}, codec, nil, testutil.NoopLogger())
+		uc := catalog.New(cat, &ctxFreeTape{tape}, codec, nil, testutil.NoopLogger(), nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if _, err := uc.ReadTest(ctx); !errors.Is(err, context.Canceled) {
@@ -490,7 +499,7 @@ func TestCatalog_TapeOperationErrors(t *testing.T) {
 		tape := labeledTape(t, codec)
 		codec.Queue = [][]domain.FileMeta{{{Path: "/a"}}}
 		prog := &progRec{}
-		uc := catalog.New(cat, tape, codec, prog, testutil.NoopLogger())
+		uc := catalog.New(cat, tape, codec, prog, testutil.NoopLogger(), nil)
 		if _, err := uc.ReadTest(context.Background()); err != nil {
 			t.Fatalf("ReadTest: %v", err)
 		}

@@ -33,15 +33,19 @@ import (
 
 // UseCase восстанавливает файлы с ленты на файловую систему.
 type UseCase struct {
-	tape  port.Tape
-	codec port.TapeCodec
-	cat   port.Catalog
-	fs    port.Filesystem
-	prog  port.ProgressReporter // nil допустим
-	log   *slog.Logger
+	tape    port.Tape
+	codec   port.TapeCodec
+	cat     port.Catalog
+	fs      port.Filesystem
+	prog    port.ProgressReporter // nil допустим
+	log     *slog.Logger
+	changer port.TapeChanger // nil — цепочки кассет не следуются
 }
 
-// New собирает use case (wire в iface/cli).
+// New собирает use case (wire в iface/cli). changer может быть nil:
+// тогда указатель продолжения на границе кассет завершает Full
+// с Warn «вставьте кассету и перезапустите» (полезно и без
+// интерактива), данные прочитанной части остаются на месте.
 func New(
 	tape port.Tape,
 	codec port.TapeCodec,
@@ -49,8 +53,12 @@ func New(
 	fs port.Filesystem,
 	prog port.ProgressReporter,
 	log *slog.Logger,
+	changer port.TapeChanger,
 ) *UseCase {
-	return &UseCase{tape: tape, codec: codec, cat: cat, fs: fs, prog: prog, log: log}
+	return &UseCase{
+		tape: tape, codec: codec, cat: cat, fs: fs,
+		prog: prog, log: log, changer: changer,
+	}
 }
 
 // Stats — итог восстановления.
@@ -63,12 +71,18 @@ type Stats struct {
 
 // Full восстанавливает все сессии ленты подряд, от BOT до EOD.
 // Повреждённая сессия не прерывает восстановление: она логируется
-// (Warn) и пропускается. Возвращает суммарную статистику.
+// (Warn) и пропускается. Кассета с указателем продолжения — часть
+// spanning-цепочки: при заданном changer восстановление следует
+// цепочке (смена кассеты со сверкой ярлыка и обратной ссылки,
+// ChainFollower), без changer'а — Warn «вставьте кассету» и конец
+// (файлы прочитанной части уже восстановлены). Возвращает суммарную
+// статистику по всем кассетам цепочки.
 func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 	if err := uc.tape.Rewind(ctx); err != nil {
 		return Stats{}, fmt.Errorf("restore full: перемотка в начало: %w", err)
 	}
-	if _, err := uc.readLabel(ctx); err != nil {
+	label, err := uc.readLabel(ctx)
+	if err != nil {
 		return Stats{}, err
 	}
 	// Позиция — на filemark'е ярлыка; переводим на индекс сессии 1
@@ -76,26 +90,33 @@ func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 	if err := uc.tape.ForwardFilemarks(ctx, 1); err != nil {
 		return Stats{}, fmt.Errorf("restore full: пропуск ярлыка: %w", err)
 	}
+	cur := TapeState{Tape: uc.tape, Label: label}
 	var total Stats
 	for {
 		if err := ctx.Err(); err != nil {
 			return total, fmt.Errorf("restore full: %w", err)
 		}
-		files, err := uc.codec.ReadSession(ctx, uc.tape, uc.fs, uc.prog)
+		files, err := uc.codec.ReadSession(ctx, cur.Tape, uc.fs, uc.prog)
 		var empty *domain.EmptyIndexError
 		if errors.As(err, &empty) {
 			break // EOD: сессии закончились
 		}
 		var cont *domain.ContinuationError
 		if errors.As(err, &cont) {
-			// Кассета кончилась, цепочка продолжается на следующей;
-			// следование по указателю — сессия 6 плана spanning.
-			uc.log.Warn("найден указатель продолжения; следование по цепочке кассет пока не реализовано",
-				slog.String("next_tape", cont.NextTapeName),
-				slog.String("job_run_id", cont.JobRunID),
-				slog.Int("session_num", int(cont.SessionNum)),
-				slog.Int("part", int(cont.Part)))
-			break
+			if uc.changer == nil {
+				uc.log.Warn("кассета имеет продолжение: вставьте следующую и перезапустите восстановление",
+					slog.String("next_tape", cont.NextTapeName),
+					slog.String("job_run_id", cont.JobRunID),
+					slog.Int("session_num", int(cont.SessionNum)),
+					slog.Int("part", int(cont.Part)))
+				break
+			}
+			next, ferr := uc.followChain(ctx, cur, cont)
+			if ferr != nil {
+				return total, fmt.Errorf("restore full: %w", ferr)
+			}
+			cur = next
+			continue
 		}
 		if err != nil {
 			if isSessionDamage(err) {
@@ -118,8 +139,22 @@ func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 	return total, nil
 }
 
+// followChain делегирует смену кассеты ChainFollower с зависимостями
+// use case'а.
+func (uc *UseCase) followChain(ctx context.Context, cur TapeState, cont *domain.ContinuationError) (TapeState, error) {
+	f := &ChainFollower{
+		Changer: uc.changer, Codec: uc.codec, Cat: uc.cat,
+		Prog: uc.prog, Log: uc.log,
+	}
+	return f.Follow(ctx, cur, cont)
+}
+
 // Selective восстанавливает выбранные пути из сессии sessionID.
 // dest nil/"" — восстановление по исходным путям из индекса.
+// Файл части spanning-цепочки лежит целиком на кассете своей части:
+// позиционирование идёт в пределах установленной ленты, и если
+// сессия принадлежит другой кассете — ошибка с именем кассеты,
+// которую нужно вставить (следование цепочке — только у Full).
 func (uc *UseCase) Selective(ctx context.Context, sessionID int64, paths []string) (Stats, error) {
 	sess, err := uc.cat.ListSessions(ctx, "")
 	if err != nil {
@@ -134,6 +169,9 @@ func (uc *UseCase) Selective(ctx context.Context, sessionID int64, paths []strin
 	}
 	if target == nil {
 		return Stats{}, &domain.SessionNotFoundError{SessionID: sessionID}
+	}
+	if err := uc.checkTapeFor(ctx, target); err != nil {
+		return Stats{}, err
 	}
 	if err := uc.positionToSession(ctx, target.Num); err != nil {
 		return Stats{}, err
@@ -244,6 +282,27 @@ func (uc *UseCase) copiesBySession(ctx context.Context, paths []string, tapeUUID
 		}
 	}
 	return ordered, nil
+}
+
+// checkTapeFor сверяет кассету сессии с установленной: selective
+// позиционируется в пределах текущей ленты, файл части цепочки лежит
+// на кассете своей части — оператору говорится, какую кассету
+// вставить.
+func (uc *UseCase) checkTapeFor(ctx context.Context, target *domain.Session) error {
+	label, err := uc.readLabelAfterRewind(ctx)
+	if err != nil {
+		return fmt.Errorf("restore selective: %w", err)
+	}
+	if label.UUID == target.TapeUUID {
+		return nil
+	}
+	name := target.TapeUUID
+	if rec, rerr := uc.cat.GetTapeByUUID(ctx, target.TapeUUID); rerr == nil {
+		name = rec.Name
+	}
+	return fmt.Errorf(
+		"restore selective: сессия %d на другой кассете — вставьте %s: %w",
+		target.ID, name, &domain.LabelMismatchError{Expected: target.TapeUUID, Actual: label.UUID})
 }
 
 // positionToSession перематывает ленту на индекс сессии num:
