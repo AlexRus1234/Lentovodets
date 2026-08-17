@@ -55,7 +55,8 @@ export interface Job {
 export interface TaskProgress {
   id: string
   kind: 'backup' | 'restore'
-  state: 'running' | 'success' | 'error'
+  /** awaiting_tape — задача приостановлена: нужна следующая кассета (spanning) */
+  state: 'running' | 'awaiting_tape' | 'success' | 'error'
   phase: string
   current_file: string
   processed_bytes: number
@@ -64,6 +65,8 @@ export interface TaskProgress {
   speed_mbps: number
   logs: string[]
   error: string
+  message: string
+  suggested_tape_name?: string
 }
 
 export interface TapeRecord {
@@ -261,6 +264,11 @@ export function startRestore(opts: {
 
 export function getTaskProgress(id: string): Promise<TaskProgress> {
   return request('GET', `/tasks/${encodeURIComponent(id)}/progress`)
+}
+
+// Продолжение задачи в awaiting_tape: tape_name="" — предложенное имя.
+export function continueTask(id: string, tapeName: string): Promise<{ status: string; tape: string }> {
+  return request('POST', `/tasks/${encodeURIComponent(id)}/continue`, { body: { tape_name: tapeName } })
 }
 
 // --- Каталог (§6.5) ---

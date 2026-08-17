@@ -166,6 +166,7 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/restore/start", s.handleRestoreStart)
 			r.Get("/tasks/active", s.handleTasksActive)
 			r.Get("/tasks/{id}/progress", s.handleTaskProgress)
+			r.Post("/tasks/{id}/continue", s.handleTaskContinue)
 			r.Get("/catalog/tapes", s.handleCatalogTapes)
 			r.Get("/catalog/sessions", s.handleCatalogSessions)
 			r.Get("/catalog/sessions/{id}/files", s.handleSessionFiles)

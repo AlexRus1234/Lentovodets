@@ -46,15 +46,17 @@ type progressView struct {
 func waitFor(t *testing.T, env *testEnv, id string, cond func(progressView) bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	var last string
 	for time.Now().Before(deadline) {
 		_, body := do(t, env, http.MethodGet, "/api/tasks/"+id+"/progress", "")
+		last = body
 		var v progressView
 		if err := json.Unmarshal([]byte(body), &v); err == nil && cond(v) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("задача %s не достигла условия за 5с", id)
+	t.Fatalf("задача %s не достигла условия за 5с; последний прогресс: %s", id, last)
 }
 
 // addJob добавляет задание media в конфиг окружения.

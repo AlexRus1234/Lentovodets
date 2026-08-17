@@ -33,11 +33,14 @@ import (
 	"lentovodec/internal/port"
 )
 
-// Состояния задачи (SPEC §6.4).
+// Состояния задачи (SPEC §6.4). awaiting_tape — расширение spanning:
+// задача приостановлена, оператору нужна следующая кассета цепочки;
+// продолжение — POST /api/tasks/{id}/continue (сессия 7 плана).
 const (
-	taskRunning = "running"
-	taskSuccess = "success"
-	taskError   = "error"
+	taskRunning      = "running"
+	taskAwaitingTape = "awaiting_tape"
+	taskSuccess      = "success"
+	taskError        = "error"
 )
 
 // maxTaskLogs — размер кольцевого буфера лога задачи (SPEC §6.4:
@@ -60,7 +63,9 @@ type Task struct {
 	processed   int64
 	total       int64
 	errText     string
-	message     string // текст оператору (смена кассеты spanning)
+	message     string      // текст оператору (смена кассеты spanning)
+	continueCh  chan string // ответ оператора в awaiting_tape (буфер 1)
+	suggested   string      // предложенное имя кассеты для продолжения
 	startedAt   time.Time
 	finishedAt  time.Time
 	logs        []string
@@ -72,18 +77,19 @@ type Task struct {
 
 // taskProgressJSON — прогресс задачи по SPEC §6.4.
 type taskProgressJSON struct {
-	ID             string   `json:"id"`
-	Kind           string   `json:"kind"`
-	State          string   `json:"state"`
-	Phase          string   `json:"phase"`
-	CurrentFile    string   `json:"current_file"`
-	ProcessedBytes int64    `json:"processed_bytes"`
-	TotalBytes     int64    `json:"total_bytes"`
-	Percent        float64  `json:"percent"`
-	SpeedMbps      float64  `json:"speed_mbps"`
-	Logs           []string `json:"logs"`
-	Error          string   `json:"error"`
-	Message        string   `json:"message"`
+	ID                string   `json:"id"`
+	Kind              string   `json:"kind"`
+	State             string   `json:"state"`
+	Phase             string   `json:"phase"`
+	CurrentFile       string   `json:"current_file"`
+	ProcessedBytes    int64    `json:"processed_bytes"`
+	TotalBytes        int64    `json:"total_bytes"`
+	Percent           float64  `json:"percent"`
+	SpeedMbps         float64  `json:"speed_mbps"`
+	Logs              []string `json:"logs"`
+	Error             string   `json:"error"`
+	Message           string   `json:"message"`
+	SuggestedTapeName string   `json:"suggested_tape_name,omitempty"`
 }
 
 // Snapshot возвращает неизменяемый снимок прогресса задачи.
@@ -100,18 +106,19 @@ func (t *Task) Snapshot() taskProgressJSON {
 	logs := make([]string, len(t.logs))
 	copy(logs, t.logs)
 	return taskProgressJSON{
-		ID:             t.ID,
-		Kind:           t.Kind,
-		State:          t.state,
-		Phase:          t.phase,
-		CurrentFile:    t.currentFile,
-		ProcessedBytes: t.processed,
-		TotalBytes:     t.total,
-		Percent:        percent,
-		SpeedMbps:      t.speedBps / (1024 * 1024),
-		Logs:           logs,
-		Error:          t.errText,
-		Message:        t.message,
+		ID:                t.ID,
+		Kind:              t.Kind,
+		State:             t.state,
+		Phase:             t.phase,
+		CurrentFile:       t.currentFile,
+		ProcessedBytes:    t.processed,
+		TotalBytes:        t.total,
+		Percent:           percent,
+		SpeedMbps:         t.speedBps / (1024 * 1024),
+		Logs:              logs,
+		Error:             t.errText,
+		Message:           t.message,
+		SuggestedTapeName: t.suggested,
 	}
 }
 
@@ -151,25 +158,76 @@ func (t *Task) update(u port.ProgressUpdate, now time.Time) {
 func (t *Task) finishSuccess(now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.state != taskRunning {
+	if !t.finishableLocked() {
 		return
 	}
 	t.state = taskSuccess
 	t.finishedAt = now
+	t.continueCh = nil
 	t.appendLogLocked("задача завершена успешно")
 }
 
-// finishError фиксирует завершение с ошибкой.
+// finishError фиксирует завершение с ошибкой. Допустима и отмена
+// в состоянии awaiting_tape: graceful shutdown отменяет ожидание
+// кассеты, задача обязана завершиться, а не висеть до таймаута.
 func (t *Task) finishError(err error, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.state != taskRunning {
+	if !t.finishableLocked() {
 		return
 	}
 	t.state = taskError
 	t.finishedAt = now
+	t.continueCh = nil
 	t.errText = err.Error()
 	t.appendLogLocked("задача завершена ошибкой: " + t.errText)
+}
+
+// finishableLocked — можно ли завершить задачу из текущего состояния.
+// Вызывать под мьютексом.
+func (t *Task) finishableLocked() bool {
+	return t.state == taskRunning || t.state == taskAwaitingTape
+}
+
+// enterAwaiting переводит задачу в ожидание кассеты оператора:
+// state=awaiting_tape, message и предложенное имя — в прогресс-объект.
+// Возвращает канал ответа оператора; false — задача уже не бегущая
+// (отменена), ожидание невозможно.
+func (t *Task) enterAwaiting(message, suggested string) (chan string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state != taskRunning {
+		return nil, false
+	}
+	t.state = taskAwaitingTape
+	t.message = message
+	t.suggested = suggested
+	t.continueCh = make(chan string, 1)
+	t.appendLogLocked(message)
+	return t.continueCh, true
+}
+
+// Continue доставляет ответ оператора задаче в awaiting_tape и
+// возвращает фактическое имя кассеты (пустое — предложенное).
+// Ошибка — задача не ожидает кассету (409 в REST).
+func (t *Task) Continue(tapeName string) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state != taskAwaitingTape || t.continueCh == nil {
+		return "", errors.New("задача не ожидает смену кассеты")
+	}
+	if tapeName == "" {
+		tapeName = t.suggested
+	}
+	t.state = taskRunning
+	t.suggested = ""
+	t.appendLogLocked("оператор: продолжение на кассете " + tapeName)
+	// Буфер 1 и единственный успешный Continue гарантируют место;
+	// получатель мог уже уйти по отмене ctx — значение просто утонет.
+	ch := t.continueCh
+	t.continueCh = nil
+	ch <- tapeName
+	return tapeName, nil
 }
 
 // appendLogLocked добавляет строку в буфер. Вызывать под мьютексом.
@@ -267,14 +325,21 @@ func (r *TaskRegistry) launch(task *Task, fn func(*Task)) {
 	}()
 }
 
-// hasActiveLocked — есть ли бегущая задача. Вызывать под мьютексом.
+// hasActiveLocked — есть ли активная задача (running или awaiting_tape:
+// ожидание кассеты держит стример так же, как запись). Вызывать под
+// мьютексом.
 func (r *TaskRegistry) hasActiveLocked() bool {
 	for _, t := range r.tasks {
-		if t.stateLocked() == taskRunning {
+		if isActiveState(t.stateLocked()) {
 			return true
 		}
 	}
 	return false
+}
+
+// isActiveState — состояние, занимающее стример.
+func isActiveState(state string) bool {
+	return state == taskRunning || state == taskAwaitingTape
 }
 
 // stateLocked — состояние задачи без полной копии (для фильтров).
@@ -292,20 +357,22 @@ func (r *TaskRegistry) Get(id string) (*Task, bool) {
 	return t, ok
 }
 
-// HasActive сообщает, есть ли хоть одна бегущая задача.
+// HasActive сообщает, есть ли хоть одна активная задача (включая
+// ожидание кассеты).
 func (r *TaskRegistry) HasActive() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.hasActiveLocked()
 }
 
-// Active возвращает бегущие задачи, старые первыми.
+// Active возвращает активные задачи (включая awaiting_tape), старые
+// первыми.
 func (r *TaskRegistry) Active() []*Task {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var active []*Task
 	for _, t := range r.tasks {
-		if t.stateLocked() == taskRunning {
+		if isActiveState(t.stateLocked()) {
 			active = append(active, t)
 		}
 	}

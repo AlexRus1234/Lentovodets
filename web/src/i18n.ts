@@ -93,6 +93,10 @@ const ru: Record<string, string> = {
   'task.success': 'Задача завершена успешно',
   'task.failure': 'Задача завершена ошибкой',
   'task.logs': 'Лог',
+  'task.awaiting': 'Ожидание кассеты',
+  'task.awaiting.hint': 'Задача приостановлена. Вставьте кассету и нажмите «Продолжить».',
+  'task.tapeName': 'Имя кассеты',
+  'task.continue': 'Продолжить',
 
   'catalog.title': 'Сессии каталога',
   'catalog.tape': 'Лента',
@@ -194,6 +198,10 @@ const en: Record<string, string> = {
   'task.success': 'Task completed successfully',
   'task.failure': 'Task failed',
   'task.logs': 'Log',
+  'task.awaiting': 'Tape change required',
+  'task.awaiting.hint': 'The task is paused. Load the next tape and press “Continue”.',
+  'task.tapeName': 'Tape name',
+  'task.continue': 'Continue',
 
   'catalog.title': 'Catalog sessions',
   'catalog.tape': 'Tape',

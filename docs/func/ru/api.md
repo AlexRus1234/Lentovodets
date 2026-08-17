@@ -92,11 +92,13 @@ CLI построены поверх него.
 |---|---|---|
 | `POST` | `/api/backup/start?job=&full=` | Запустить бекап, вернуть `taskID` |
 | `POST` | `/api/restore/start?paths=&dest=&original=` | Запустить восстановление, вернуть `taskID` |
-| `GET` | `/api/tasks/active` | Список активных задач |
+| `GET` | `/api/tasks/active` | Список активных задач (включая ожидающие кассету) |
 | `GET` | `/api/tasks/{id}/progress` | Прогресс задачи (объект ниже) |
+| `POST` | `/api/tasks/{id}/continue` | Продолжить задачу в `awaiting_tape`: тело `{"tape_name": "..."}` (пустое/отсутствующее — предложенное имя); 409 — задача не в ожидании, 404 — задачи нет. Событие пишется в аудит-лог (`event=task_continue`, пользователь сессии или `api-key`) |
 
 Одновременно активна **одна** задача (стример один): повторный запуск до
-завершения предыдущей — ошибка «занято». Реестр in-memory: перезапуск
+завершения предыдущей — ошибка «занято». Ожидающая кассету задача
+(`awaiting_tape`) считается активной. Реестр in-memory: перезапуск
 демона теряет реестр задач, но не данные.
 
 Прогресс-объект:
@@ -112,12 +114,23 @@ CLI построены поверх него.
   "percent": 12.5,
   "speed_mbps": 145.2,
   "logs": ["...последние 50 строк..."],
-  "error": ""
+  "error": "",
+  "message": "",
+  "suggested_tape_name": ""
 }
 ```
 
-`state` — `running | success | error`; `phase` — `scan | write |
-finalize`; `logs` — кольцевой буфер последних строк лога задачи.
+`state` — `running | awaiting_tape | success | error`; `phase` —
+`scan | write | finalize`; `logs` — кольцевой буфер последних строк
+лога задачи.
+
+`awaiting_tape` — расширение spanning: задача приостановлена, нужна
+следующая кассета цепочки. `message` несёт текст для оператора
+(например, «кассета test-tape закрыта (span): вставьте чистую кассету
+media-002 (часть 2)»), `suggested_tape_name` — предзаполнение имени
+в диалоге (пустое `tape_name` в continue примет его). После успешного
+continue задача возвращается в `running`. Отменить ожидающую задачу
+можно остановкой демона (cancel-эндпоинта нет).
 
 ### Каталог
 
@@ -168,6 +181,16 @@ curl -s -X POST http://127.0.0.1:29201/api/settings \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"device": "/dev/nst1"}'
+```
+
+### Продолжение задачи после смены кассеты (spanning)
+
+```bash
+# Прогресс показывает state=awaiting_tape, message и suggested_tape_name
+curl -s -X POST http://127.0.0.1:29201/api/tasks/$TASK/continue \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"tape_name": "media-002"}'   # или {} — примет предложенное имя
 ```
 
 ---

@@ -14,19 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Асинхронные задачи: запуск бекапа/восстановления, прогресс.
-// См. docs/SPECIFICATION.md §6.4.
+// Асинхронные задачи: запуск бекапа/восстановления, прогресс,
+// продолжение после смены кассеты. См. docs/SPECIFICATION.md §6.4.
 
 package web
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"lentovodec/internal/iface/destfs"
-	"lentovodec/internal/port"
 	"lentovodec/internal/usecase/backup"
 	"lentovodec/internal/usecase/restore"
 )
@@ -54,10 +56,11 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 			task.finishError(err, s.deps.Clock.Now())
 			return
 		}
-		defer closeTape(s, tape)
+		changer := &daemonChanger{srv: s, task: task, job: jobName, cur: tape}
+		defer changer.finish() // финальная кассета цепочки; промежуточные закрывает changer
 		uc := backup.New(s.deps.Config, tape, s.deps.Codec, s.deps.Catalog,
 			s.deps.FS, s.deps.Hasher, s.deps.Rand, s.deps.Clock,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log, nil) // changer: pause/resume демона — позже
+			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
 		if _, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full}); err != nil {
 			task.finishError(err, s.deps.Clock.Now()) // идемпотентно после prog.Fail
 		}
@@ -95,14 +98,14 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 			task.finishError(err, s.deps.Clock.Now())
 			return
 		}
-		defer closeTape(s, tape)
+		changer := &daemonChanger{srv: s, task: task, cur: tape}
+		defer changer.finish()
 		fs := s.deps.FS
 		if dest != "" {
 			fs = destfs.Wrap(s.deps.FS, dest)
 		}
 		uc := restore.New(tape, s.deps.Codec, s.deps.Catalog, fs,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log,
-			nil) // changer: pause/resume демона — сессия 7 плана spanning
+			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
 		if len(paths) > 0 {
 			_, err = uc.Smart(s.ctx, paths)
 		} else {
@@ -142,8 +145,8 @@ func (s *Server) handleTaskProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 // startTapeTask регистрирует фоновую задачу атомарно; отказ, если уже
-// есть активная — стример один, параллельные ленточные задачи
-// бессмысленны.
+// есть активная (включая ожидающую кассету) — стример один, параллельные
+// ленточные задачи бессмысленны.
 func (s *Server) startTapeTask(kind string, fn func(*Task)) (string, error) {
 	id := s.deps.NewTaskID()
 	if err := s.tasks.StartIfIdle(id, kind, fn); err != nil {
@@ -152,9 +155,35 @@ func (s *Server) startTapeTask(kind string, fn func(*Task)) (string, error) {
 	return id, nil
 }
 
-// closeTape закрывает ленту фоновой задачи, логируя сбой.
-func closeTape(s *Server, tape port.Tape) {
-	if err := tape.Close(); err != nil {
-		s.deps.Log.Warn("web: закрытие ленты задачи", "error", err.Error())
+// taskContinueRequest — тело POST /api/tasks/{id}/continue.
+type taskContinueRequest struct {
+	TapeName string `json:"tape_name"` // "" — предложенное (suggested_tape_name)
+}
+
+// handleTaskContinue — POST /api/tasks/{id}/continue: ответ оператора
+// задаче, ожидающей кассету (state=awaiting_tape). 409 — задача не в
+// ожидании, 404 — задачи нет. Аудит: event=task_continue, пользователь
+// сессии; публичный API-ключ допустим (скриптовая смена кассет).
+func (s *Server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
+	task, ok := s.tasks.Get(chi.URLParam(r, "id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "задача не найдена", "not_found")
+		return
 	}
+	var body taskContinueRequest
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err != nil && !errors.Is(err, io.EOF) { // пустое тело = предложенное имя
+			writeErr(w, http.StatusBadRequest, "тело запроса: "+err.Error(), "bad_request")
+			return
+		}
+	}
+	name, err := task.Continue(body.TapeName)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error(), "not_awaiting_tape")
+		return
+	}
+	s.deps.Log.Info("task continue",
+		"task", task.ID, "tape", name, "user", requestUser(r), "event", "task_continue")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "tape": name})
 }
