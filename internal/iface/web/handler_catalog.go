@@ -42,6 +42,7 @@ type SessionJSON struct {
 	Type      string `json:"type"`
 	Timestamp int64  `json:"timestamp"`
 	JobRunID  string `json:"job_run_id"`
+	Part      int32  `json:"part"`
 }
 
 // FileJSON — файл сессии.
@@ -98,6 +99,7 @@ func (s *Server) handleCatalogSessions(w http.ResponseWriter, r *http.Request) {
 			Type:      string(sess.Type),
 			Timestamp: sess.Timestamp,
 			JobRunID:  sess.JobRunID,
+			Part:      sess.Part,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

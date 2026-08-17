@@ -136,7 +136,7 @@ exclude-шаблонов — [features.md](features.md).
 | Команда | Описание |
 |---|---|
 | `lentovodec catalog tapes` | Список кассет |
-| `lentovodec catalog sessions [--tape UUID]` | Список сессий (с фильтром по кассете) |
+| `lentovodec catalog sessions [--tape UUID]` | Список сессий (с фильтром по кассете); у частей spanning-цепочек — суффикс `part N` |
 | `lentovodec catalog files --session N` | Файлы сессии |
 | `lentovodec catalog search <pattern>` | Поиск файлов по подстроке |
 | `lentovodec catalog rm --session N` | Удалить сессию из каталога (данные на ленте остаются) |

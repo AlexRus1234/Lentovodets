@@ -214,7 +214,7 @@ func TestCatalog_Endpoints(t *testing.T) {
 	}
 
 	code, body = do(t, env, http.MethodGet, "/api/catalog/sessions?tape=uuid-A", "")
-	if code != http.StatusOK || !strings.Contains(body, `"num":1`) {
+	if code != http.StatusOK || !strings.Contains(body, `"num":1`) || !strings.Contains(body, `"part":1`) {
 		t.Fatalf("sessions: %d %q", code, body)
 	}
 	code, body = do(t, env, http.MethodGet, "/api/catalog/sessions", "")

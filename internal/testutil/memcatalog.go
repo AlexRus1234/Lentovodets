@@ -100,11 +100,14 @@ func (c *MemCatalog) GetTapeByUUID(ctx context.Context, uuid string) (port.TapeR
 }
 
 // CreateSession вставляет запись о сессии и возвращает её PK;
-// ошибка FK, если кассета не зарегистрирована (как при PRAGMA
-// foreign_keys=ON в sqlite).
+// Part < 1 нормализуется в 1 (как в sqlite); ошибка FK, если кассета
+// не зарегистрирована (как при PRAGMA foreign_keys=ON в sqlite).
 func (c *MemCatalog) CreateSession(ctx context.Context, sess domain.Session) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
+	}
+	if sess.Part < 1 {
+		sess.Part = 1
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -222,6 +225,34 @@ func (c *MemCatalog) ListSessions(ctx context.Context, tapeUUID string) ([]domai
 		}
 	}
 	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].TapeUUID != sessions[j].TapeUUID {
+			return sessions[i].TapeUUID < sessions[j].TapeUUID
+		}
+		return sessions[i].Num < sessions[j].Num
+	})
+	return sessions, nil
+}
+
+// GetSessionChain — все сессии запуска jobRunID (части цепочки
+// spanning-бекапа) по возрастанию part, внутри части — по tape/num.
+// Неизвестный JobRunID — пустой срез, не ошибка. Сортировка
+// эквивалентна ORDER BY part, tape_uuid, session_num в sqlite.
+func (c *MemCatalog) GetSessionChain(ctx context.Context, jobRunID string) ([]domain.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sessions := make([]domain.Session, 0, len(c.sessions))
+	for _, sess := range c.sessions {
+		if sess.JobRunID == jobRunID {
+			sessions = append(sessions, sess)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].Part != sessions[j].Part {
+			return sessions[i].Part < sessions[j].Part
+		}
 		if sessions[i].TapeUUID != sessions[j].TapeUUID {
 			return sessions[i].TapeUUID < sessions[j].TapeUUID
 		}

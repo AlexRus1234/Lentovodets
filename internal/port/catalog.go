@@ -72,6 +72,11 @@ type Catalog interface {
 	// ListSessions — сессии; tapeUUID == "" — по всем кассетам.
 	ListSessions(ctx context.Context, tapeUUID string) ([]domain.Session, error)
 
+	// GetSessionChain — все сессии запуска jobRunID (части цепочки
+	// spanning-бекапа), упорядоченные по part, внутри части — по
+	// tape/num. Пустой срез для неизвестного JobRunID (не ошибка).
+	GetSessionChain(ctx context.Context, jobRunID string) ([]domain.Session, error)
+
 	// GetFilesBySession — все файлы сессии; ошибка, если сессии нет.
 	GetFilesBySession(ctx context.Context, sessionID int64) ([]domain.FileMeta, error)
 

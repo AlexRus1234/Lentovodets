@@ -280,6 +280,84 @@ func TestMemCatalog_DeleteAndPrune(t *testing.T) {
 	}
 }
 
+func TestMemCatalog_GetSessionChain(t *testing.T) {
+	ctx := context.Background()
+	cat := testutil.NewMemCatalog()
+	_ = cat.RegisterTape(ctx, "u1", "t1", 0)
+	_ = cat.RegisterTape(ctx, "u2", "t2", 0)
+
+	empty, err := cat.GetSessionChain(ctx, "нет-такого-запуска")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("GetSessionChain(нет такого) = %v, %v; want пусто, nil", empty, err)
+	}
+
+	// Цепочка из трёх частей на двух кассетах + посторонний запуск;
+	// вставляем в обратном порядке — сортировка обязана исправить.
+	id3, _ := cat.CreateSession(ctx, domain.Session{TapeUUID: "u2", Num: 1, Timestamp: 30, JobRunID: "run-span", Part: 3})
+	id2, _ := cat.CreateSession(ctx, domain.Session{TapeUUID: "u2", Num: 2, Timestamp: 20, JobRunID: "run-span", Part: 2})
+	id1, _ := cat.CreateSession(ctx, domain.Session{TapeUUID: "u1", Num: 2, Timestamp: 10, JobRunID: "run-span", Part: 1})
+	_, _ = cat.CreateSession(ctx, domain.Session{TapeUUID: "u1", Num: 3, Timestamp: 40, JobRunID: "run-other"})
+
+	chain, err := cat.GetSessionChain(ctx, "run-span")
+	if err != nil {
+		t.Fatalf("GetSessionChain: %v", err)
+	}
+	want := []int64{id1, id2, id3}
+	if len(chain) != len(want) {
+		t.Fatalf("len = %d, want %d", len(chain), len(want))
+	}
+	for i, id := range want {
+		if chain[i].ID != id {
+			t.Errorf("chain[%d].ID = %d, want %d (порядок part 1,2,3)", i, chain[i].ID, id)
+		}
+	}
+
+	// Одинаковая часть — детерминированный порядок по tape, затем num.
+	idB, _ := cat.CreateSession(ctx, domain.Session{TapeUUID: "u2", Num: 5, JobRunID: "run-tie", Part: 2})
+	idA, _ := cat.CreateSession(ctx, domain.Session{TapeUUID: "u1", Num: 7, JobRunID: "run-tie", Part: 2})
+	tie, err := cat.GetSessionChain(ctx, "run-tie")
+	if err != nil {
+		t.Fatalf("GetSessionChain(run-tie): %v", err)
+	}
+	if len(tie) != 2 || tie[0].ID != idA || tie[1].ID != idB {
+		t.Errorf("одинаковая часть: %+v, want u1 (%d) перед u2 (%d)", tie, idA, idB)
+	}
+}
+
+func TestMemCatalog_PartNormalized(t *testing.T) {
+	ctx := context.Background()
+	cat := testutil.NewMemCatalog()
+	_ = cat.RegisterTape(ctx, "u1", "t1", 0)
+
+	for i, part := range []int32{0, -7} {
+		if _, err := cat.CreateSession(ctx, domain.Session{
+			TapeUUID: "u1", Num: int32(i + 1), Type: domain.SessionFull,
+			JobRunID: "run", Part: part,
+		}); err != nil {
+			t.Fatalf("CreateSession(part=%d): %v", part, err)
+		}
+	}
+	if _, err := cat.CreateSession(ctx, domain.Session{
+		TapeUUID: "u1", Num: 3, Type: domain.SessionFull, JobRunID: "run", Part: 2,
+	}); err != nil {
+		t.Fatalf("CreateSession(part=2): %v", err)
+	}
+
+	sessions, err := cat.ListSessions(ctx, "")
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	want := []int32{1, 1, 2}
+	if len(sessions) != len(want) {
+		t.Fatalf("len = %d, want %d", len(sessions), len(want))
+	}
+	for i, part := range want {
+		if sessions[i].Part != part {
+			t.Errorf("sessions[%d].Part = %d, want %d", i, sessions[i].Part, part)
+		}
+	}
+}
+
 func TestMemCatalog_WithSnapshotSeedsState(t *testing.T) {
 	ctx := context.Background()
 	cat := testutil.NewMemCatalog().WithSnapshot(map[string]domain.FileMeta{
@@ -303,6 +381,9 @@ func TestMemCatalog_CanceledContext(t *testing.T) {
 	_, err := catPort.GetTapeByUUID(ctx, "u")
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("GetTapeByUUID: %v; want context.Canceled", err)
+	}
+	if _, err := catPort.GetSessionChain(ctx, "run"); !errors.Is(err, context.Canceled) {
+		t.Errorf("GetSessionChain: %v; want context.Canceled", err)
 	}
 }
 

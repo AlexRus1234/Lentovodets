@@ -85,8 +85,12 @@ func newCatalogSessionsCmd(deps Deps, flags *globalFlags) *cobra.Command {
 			}
 			rt.printf("%4s %-4s %-24s %s\n", "ID", "NUM", "TYPE", "TAPE/время")
 			for _, s := range sessions {
-				rt.printf("%4d %-4d %-24s %s %s\n", s.ID, s.Num, s.Type, s.TapeUUID,
+				line := fmt.Sprintf("%4d %-4d %-24s %s %s", s.ID, s.Num, s.Type, s.TapeUUID,
 					time.Unix(s.Timestamp, 0).UTC().Format(time.RFC3339))
+				if s.Part > 1 {
+					line += fmt.Sprintf(" part %d", s.Part)
+				}
+				rt.printf("%s\n", line)
 			}
 			return nil
 		},

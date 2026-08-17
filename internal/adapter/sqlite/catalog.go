@@ -42,8 +42,8 @@ const (
 
 	selectTapeSQL = `SELECT uuid, name, formatted_at FROM tapes WHERE uuid = ?`
 
-	insertSessionSQL = `INSERT INTO sessions (tape_uuid, session_num, type, timestamp, job_run_id)
-		VALUES (?, ?, ?, ?, ?)`
+	insertSessionSQL = `INSERT INTO sessions (tape_uuid, session_num, type, timestamp, job_run_id, part)
+		VALUES (?, ?, ?, ?, ?, ?)`
 
 	selectLastSessionNumSQL = `SELECT COALESCE(MAX(session_num), 0) FROM sessions WHERE tape_uuid = ?`
 
@@ -58,11 +58,15 @@ const (
 
 	selectTapesSQL = `SELECT uuid, name, formatted_at FROM tapes ORDER BY name`
 
-	selectSessionsSQL = `SELECT id, tape_uuid, session_num, type, timestamp, job_run_id
+	selectSessionsSQL = `SELECT id, tape_uuid, session_num, type, timestamp, job_run_id, part
 		FROM sessions WHERE tape_uuid = ? ORDER BY session_num`
 
-	selectAllSessionsSQL = `SELECT id, tape_uuid, session_num, type, timestamp, job_run_id
+	selectAllSessionsSQL = `SELECT id, tape_uuid, session_num, type, timestamp, job_run_id, part
 		FROM sessions ORDER BY tape_uuid, session_num`
+
+	selectSessionChainSQL = `SELECT id, tape_uuid, session_num, type, timestamp, job_run_id, part
+		FROM sessions WHERE job_run_id = ?
+		ORDER BY part ASC, tape_uuid ASC, session_num ASC`
 
 	sessionExistsSQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)`
 
@@ -114,7 +118,8 @@ func New(path string) (*Catalog, error) {
 	return c, nil
 }
 
-// init применяет PRAGMA и схему (см. doc пакета и SPECIFICATION §3.1).
+// init применяет PRAGMA, миграции и схему (см. doc пакета и
+// SPECIFICATION §3.1).
 func (c *Catalog) init() error {
 	pragmas := [...]string{
 		`PRAGMA foreign_keys = ON`,
@@ -125,6 +130,9 @@ func (c *Catalog) init() error {
 		if _, err := c.db.Exec(p); err != nil {
 			return fmt.Errorf("sqlite: %s: %w", p, err)
 		}
+	}
+	if err := c.applyMigrations(); err != nil {
+		return err
 	}
 	return c.applySchema()
 }
@@ -153,9 +161,13 @@ func (c *Catalog) GetTapeByUUID(ctx context.Context, uuid string) (port.TapeReco
 }
 
 // CreateSession вставляет запись о сессии и возвращает её PK.
+// Part < 1 нормализуется в 1 (обычная не разделённая сессия).
 func (c *Catalog) CreateSession(ctx context.Context, sess domain.Session) (int64, error) {
+	if sess.Part < 1 {
+		sess.Part = 1
+	}
 	res, err := c.db.ExecContext(ctx, insertSessionSQL,
-		sess.TapeUUID, sess.Num, string(sess.Type), sess.Timestamp, sess.JobRunID)
+		sess.TapeUUID, sess.Num, string(sess.Type), sess.Timestamp, sess.JobRunID, sess.Part)
 	if err != nil {
 		return 0, fmt.Errorf("sqlite: создание сессии %d на кассете %s: %w",
 			sess.Num, sess.TapeUUID, err)
@@ -287,10 +299,9 @@ func (c *Catalog) ListSessions(ctx context.Context, tapeUUID string) ([]domain.S
 	}
 	var sessions []domain.Session
 	scanErr := scanAll(rows, func(rows *sql.Rows) error {
-		var sess domain.Session
-		if err := rows.Scan(&sess.ID, &sess.TapeUUID, &sess.Num,
-			&sess.Type, &sess.Timestamp, &sess.JobRunID); err != nil {
-			return fmt.Errorf("sqlite: чтение сессии: %w", err)
+		sess, err := scanSession(rows)
+		if err != nil {
+			return err
 		}
 		sessions = append(sessions, sess)
 		return nil
@@ -299,6 +310,39 @@ func (c *Catalog) ListSessions(ctx context.Context, tapeUUID string) ([]domain.S
 		return nil, scanErr
 	}
 	return sessions, nil
+}
+
+// GetSessionChain — все сессии запуска jobRunID (части цепочки
+// spanning-бекапа) по возрастанию part, внутри части — по tape/num.
+// Неизвестный JobRunID — пустой срез, не ошибка.
+func (c *Catalog) GetSessionChain(ctx context.Context, jobRunID string) ([]domain.Session, error) {
+	rows, err := c.db.QueryContext(ctx, selectSessionChainSQL, jobRunID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: цепочка запуска %s: %w", jobRunID, err)
+	}
+	var sessions []domain.Session
+	scanErr := scanAll(rows, func(rows *sql.Rows) error {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return err
+		}
+		sessions = append(sessions, sess)
+		return nil
+	})
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	return sessions, nil
+}
+
+// scanSession читает строку сессии: колонки в порядке selectSessionsSQL.
+func scanSession(rows *sql.Rows) (domain.Session, error) {
+	var sess domain.Session
+	if err := rows.Scan(&sess.ID, &sess.TapeUUID, &sess.Num,
+		&sess.Type, &sess.Timestamp, &sess.JobRunID, &sess.Part); err != nil {
+		return domain.Session{}, fmt.Errorf("sqlite: чтение сессии: %w", err)
+	}
+	return sess, nil
 }
 
 // GetFilesBySession — все файлы сессии; *domain.SessionNotFoundError,

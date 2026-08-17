@@ -124,7 +124,7 @@ finalize`; `logs` — кольцевой буфер последних стро�
 | Метод | Путь | Описание |
 |---|---|---|
 | `GET` | `/api/catalog/tapes` | Список кассет |
-| `GET` | `/api/catalog/sessions?tape=` | Список сессий (фильтр по UUID кассеты) |
+| `GET` | `/api/catalog/sessions?tape=` | Список сессий (фильтр по UUID кассеты); объект сессии включает `part` — номер части в цепочке spanning-запуска (обычная сессия — `1`) |
 | `GET` | `/api/catalog/sessions/{id}/files` | Файлы сессии |
 | `GET` | `/api/catalog/search?q=` | Поиск файлов по подстроке |
 | `DELETE` | `/api/catalog/sessions/{id}` | Удалить сессию из каталога |

@@ -14,15 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Схема каталога (docs/SPECIFICATION.md §3.1). Миграционного движка
-// нет: единственная «миграция» — идемпотентный CREATE TABLE IF NOT EXISTS.
+// Схема каталога (docs/SPECIFICATION.md §3.1) и её миграции.
+// Миграционный движок — PRAGMA user_version: номер схемы в заголовке
+// БД, список миграций применяется в конструкторе до CREATE TABLE.
+// Свежая БД создаётся сразу актуальной схемой (CREATE TABLE IF NOT
+// EXISTS), миграции для неё — no-op.
 
 package sqlite
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+)
 
 // applySchema создаёт таблицы и индексы каталога, если их ещё нет.
-// Вызывается из конструктора при каждом открытии БД.
+// Вызывается из конструктора при каждом открытии БД (после миграций).
 func (c *Catalog) applySchema() error {
 	for _, stmt := range schemaStatements() {
 		if _, err := c.db.Exec(stmt); err != nil {
@@ -47,6 +54,7 @@ func schemaStatements() []string {
 			type        TEXT NOT NULL CHECK (type IN ('FULL', 'INC')),
 			timestamp   INTEGER NOT NULL,
 			job_run_id  TEXT NOT NULL,
+			part        INTEGER NOT NULL DEFAULT 1,
 			FOREIGN KEY (tape_uuid) REFERENCES tapes(uuid),
 			UNIQUE (tape_uuid, session_num)
 		)`,
@@ -65,4 +73,60 @@ func schemaStatements() []string {
 		`CREATE INDEX IF NOT EXISTS idx_files_session ON files(session_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_tape ON sessions(tape_uuid, session_num)`,
 	}
+}
+
+// applyMigrations доводит существующую БД до актуальной версии схемы:
+// применяет миграции с user_version+1 по последнюю, каждую в своей
+// транзакции вместе с записью нового user_version.
+func (c *Catalog) applyMigrations() error {
+	var current int
+	if err := c.db.QueryRow(`PRAGMA user_version`).Scan(&current); err != nil {
+		return fmt.Errorf("sqlite: чтение user_version: %w", err)
+	}
+	list := migrationList()
+	for version := current; version < len(list); version++ {
+		tx, err := c.db.Begin()
+		if err != nil {
+			return fmt.Errorf("sqlite: миграция v%d: %w", version+1, err)
+		}
+		if err := list[version](tx); err != nil {
+			return rollback(tx, fmt.Errorf("sqlite: миграция v%d: %w", version+1, err))
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version+1)); err != nil {
+			return rollback(tx, fmt.Errorf("sqlite: миграция v%d: %w", version+1, err))
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("sqlite: миграция v%d: %w", version+1, err)
+		}
+	}
+	return nil
+}
+
+// migrationList возвращает миграции по порядку; индекс элемента +1 —
+// версия схемы, которую миграция устанавливает.
+func migrationList() []func(tx *sql.Tx) error {
+	return []func(tx *sql.Tx) error{
+		migrateV1,
+	}
+}
+
+// migrateV1: v0 → v1 — колонка part таблицы sessions (номер части
+// цепочки spanning-запуска, docs/SPECIFICATION.md §3.1). Существующие
+// строки получают 1 (DEFAULT): до spanning каждая сессия — часть 1.
+// ALTER — единственная операция; «no such table» (свежая БД, таблицы
+// создаст applySchema) и «duplicate column name» (колонка уже есть)
+// — не ошибки. Сопоставление по тексту ошибки SQLite — тот же приём,
+// что контракт ENOSPC в filetape: адаптер не создаёт domain-ошибок,
+// а переводы текстов драйвера стабильны.
+func migrateV1(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE sessions
+		ADD COLUMN part INTEGER NOT NULL DEFAULT 1`)
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "no such table") || strings.Contains(msg, "duplicate column name") {
+		return nil
+	}
+	return fmt.Errorf("sqlite: ALTER sessions ADD part: %w", err)
 }

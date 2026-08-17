@@ -104,6 +104,7 @@ func (c *HTTPClient) ListSessions(ctx context.Context, tapeUUID string) ([]domai
 			Type:      domain.SessionType(s.Type),
 			Timestamp: s.Timestamp,
 			JobRunID:  s.JobRunID,
+			Part:      s.Part,
 		})
 	}
 	return out, nil

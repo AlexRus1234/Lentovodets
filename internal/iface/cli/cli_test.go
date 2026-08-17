@@ -370,6 +370,24 @@ func TestDaemonCommands_ViaClient(t *testing.T) {
 	}
 }
 
+func TestCatalogSessions_PartSuffix(t *testing.T) {
+	client := &fakeClient{sessions: []domain.Session{
+		{ID: 1, TapeUUID: "u1", Num: 2, Type: domain.SessionFull, Timestamp: 1700000100, JobRunID: "r1", Part: 2},
+		{ID: 2, TapeUUID: "u1", Num: 3, Type: domain.SessionInc, Timestamp: 1700000200, JobRunID: "r2"},
+	}}
+	e := newEnv(t, "", client)
+	out, err := outOf(t, e, "catalog", "sessions")
+	if err != nil {
+		t.Fatalf("catalog sessions: %v", err)
+	}
+	if !strings.Contains(out, "part 2") {
+		t.Errorf("вывод %q не содержит суффикс части \"part 2\"", out)
+	}
+	if strings.Contains(out, "part 1") || strings.Contains(out, "3 part") {
+		t.Errorf("вывод %q: у part=1 суффикса быть не должно", out)
+	}
+}
+
 func TestDaemonCommand_Stub(t *testing.T) {
 	e := newEnv(t, "", nil)
 	if _, err := outOf(t, e, "daemon"); err != nil {

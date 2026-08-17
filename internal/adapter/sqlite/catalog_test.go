@@ -416,6 +416,103 @@ func TestListSessions_FilterAndOrder(t *testing.T) {
 	}
 }
 
+func TestGetSessionChain(t *testing.T) {
+	c, sess := newCatalog(t)
+	ctx := context.Background()
+	if err := c.RegisterTape(ctx, "tape-2", "media-002", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Неизвестный запуск — пустой срез, не ошибка.
+	empty, err := c.GetSessionChain(ctx, "нет-такого-запуска")
+	if err != nil {
+		t.Fatalf("GetSessionChain(нет такого): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("GetSessionChain(нет такого) = %+v, want пусто", empty)
+	}
+
+	// Цепочка из трёх частей на двух кассетах + посторонние запуски.
+	// Вставляем в обратном порядке: сортировка обязана исправить.
+	part3 := sess
+	part3.TapeUUID, part3.Num, part3.JobRunID, part3.Part = "tape-2", 1, "run-span", 3
+	id3 := mustSession(t, c, part3)
+	part2 := sess
+	part2.TapeUUID, part2.Num, part2.JobRunID, part2.Part = "tape-2", 2, "run-span", 2
+	id2 := mustSession(t, c, part2)
+	part1 := sess
+	part1.Num, part1.JobRunID, part1.Part = 1, "run-span", 1
+	id1 := mustSession(t, c, part1)
+	other := sess
+	other.Num, other.JobRunID, other.TapeUUID = 3, "run-other", "tape-2"
+	mustSession(t, c, other)
+
+	chain, err := c.GetSessionChain(ctx, "run-span")
+	if err != nil {
+		t.Fatalf("GetSessionChain: %v", err)
+	}
+	want := []int64{id1, id2, id3}
+	if len(chain) != len(want) {
+		t.Fatalf("len = %d, want %d", len(chain), len(want))
+	}
+	for i, id := range want {
+		if chain[i].ID != id {
+			t.Errorf("chain[%d].ID = %d, want %d (порядок part 1,2,3)", i, chain[i].ID, id)
+		}
+	}
+	if chain[0].TapeUUID != "tape-1" || chain[1].TapeUUID != "tape-2" || chain[2].Num != 1 {
+		t.Errorf("цепочка: %+v", chain)
+	}
+
+	// Одинаковая часть (экзотика) — детерминированный порядок по tape.
+	sameA := sess
+	sameA.TapeUUID, sameA.Num, sameA.JobRunID, sameA.Part = "tape-2", 4, "run-tie", 2
+	idA := mustSession(t, c, sameA)
+	sameB := sess
+	sameB.Num, sameB.JobRunID, sameB.Part = 3, "run-tie", 2
+	idB := mustSession(t, c, sameB)
+	tie, err := c.GetSessionChain(ctx, "run-tie")
+	if err != nil {
+		t.Fatalf("GetSessionChain(run-tie): %v", err)
+	}
+	if len(tie) != 2 || tie[0].ID != idB || tie[1].ID != idA {
+		t.Errorf("одинаковая часть: порядок %+v, want tape-1 (%d) перед tape-2 (%d)", tie, idB, idA)
+	}
+}
+
+func TestCreateSession_PartNormalized(t *testing.T) {
+	c, sess := newCatalog(t)
+	ctx := context.Background()
+
+	for i, part := range []int32{0, -7} {
+		s := sess
+		s.Num = int32(i + 1)
+		s.JobRunID, s.Part = "run-"+itoa(int(part)), part
+		if _, err := c.CreateSession(ctx, s); err != nil {
+			t.Fatalf("CreateSession(part=%d): %v", part, err)
+		}
+	}
+	s := sess
+	s.Num, s.JobRunID, s.Part = 3, "run-2", 2
+	if _, err := c.CreateSession(ctx, s); err != nil {
+		t.Fatalf("CreateSession(part=2): %v", err)
+	}
+
+	sessions, err := c.ListSessions(ctx, "tape-1")
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	want := []int32{1, 1, 2}
+	if len(sessions) != len(want) {
+		t.Fatalf("len = %d, want %d", len(sessions), len(want))
+	}
+	for i, part := range want {
+		if sessions[i].Part != part {
+			t.Errorf("sessions[%d].Part = %d, want %d", i, sessions[i].Part, part)
+		}
+	}
+}
+
 func TestGetFilesBySession_NotFound(t *testing.T) {
 	c, _ := newCatalog(t)
 	_, err := c.GetFilesBySession(context.Background(), 999)

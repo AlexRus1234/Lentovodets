@@ -118,6 +118,15 @@ func TestGetAllFileCopies_CanceledContext(t *testing.T) {
 	}
 }
 
+func TestGetSessionChain_CanceledContext(t *testing.T) {
+	c, sess := newCatalog(t)
+	mustSession(t, c, sess)
+	ctx := canceledCtx()
+	if _, err := c.GetSessionChain(ctx, sess.JobRunID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
 func TestDeleteSession_CanceledContext(t *testing.T) {
 	c, sess := newCatalog(t)
 	id := mustSession(t, c, sess)
