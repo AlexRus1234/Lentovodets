@@ -35,7 +35,9 @@ import (
 // данных, как у реального декодера). ReadFiles используется, если
 // очередь пуста и задан непустой слайс. Continuation-сценарий: при
 // ContOnCall > 0 вызов ReadSession с этим номером возвращает Cont
-// вместо сессии (лента с указателем продолжения).
+// вместо сессии (лента с указателем продолжения). ErrWriteOnce
+// срабатывает на ErrWriteOn-м вызове WriteSession и сбрасывается
+// (аварийный сбой конкретной части spanning-цепочки).
 type FakeCodec struct {
 	ErrEncode    error
 	ErrDecode    error
@@ -43,11 +45,14 @@ type FakeCodec struct {
 	ErrRead      error
 	ErrReadOnce  error // срабатывает на ErrReadOn-м вызове и сбрасывается
 	ErrReadOn    int   // номер вызова ReadSession (с 1) для ErrReadOnce
+	ErrWriteOnce error // срабатывает на ErrWriteOn-м вызове WriteSession и сбрасывается
+	ErrWriteOn   int   // номер вызова WriteSession (с 1) для ErrWriteOnce
 	Queue        [][]domain.FileMeta
 	ReadFiles    []domain.FileMeta
 	WroteHeaders []port.SessionHeader
 	WroteFiles   [][]domain.FileMeta
 	ReadCalls    int
+	WriteCalls   int
 	Cont         *domain.ContinuationError // выдаётся ReadSession на вызове ContOnCall
 	ContOnCall   int                       // номер вызова ReadSession (с 1)
 	ContQueue    []port.Continuation       // очередь ReadContinuation; пусто — io.EOF
@@ -97,8 +102,14 @@ func (c *FakeCodec) WriteSession(
 	fs port.FileReader,
 	prog port.ProgressReporter,
 ) error {
+	c.WriteCalls++
 	if c.ErrWrite != nil {
 		return c.ErrWrite
+	}
+	if c.ErrWriteOnce != nil && c.WriteCalls == c.ErrWriteOn {
+		err := c.ErrWriteOnce
+		c.ErrWriteOnce = nil
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err

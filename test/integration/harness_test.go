@@ -167,10 +167,11 @@ func (h *harness) formatUC() *format.UseCase {
 	return format.New(h.tape, h.codec, h.cat, h.rnd, h.clock, testutil.NoopLogger())
 }
 
-// backupUC собирает use case бекапа (источник — реальная ФС).
+// backupUC собирает use case бекапа (источник — реальная ФС);
+// changer — nil: интеграционные spanning-сценарии придут сессией 8.
 func (h *harness) backupUC() *backup.UseCase {
 	return backup.New(h.cfg, h.tape, h.codec, h.cat, h.fs, h.hasher,
-		h.rnd, h.clock, nil, testutil.NoopLogger())
+		h.rnd, h.clock, nil, testutil.NoopLogger(), nil)
 }
 
 // restoreUC собирает use case восстановления в h.dest.

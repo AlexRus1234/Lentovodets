@@ -203,6 +203,22 @@ func (e *FileTooLargeError) Is(target error) bool {
 	return ok
 }
 
+// TapeChangerError — планировщик разделил сессию на части по ёмкости,
+// а смена кассет недоступна (нет интерактивного changer'а или демона).
+// Каталог и лента не тронуты: ошибка возвращается до записи.
+type TapeChangerError struct{}
+
+// Error реализует интерфейс error.
+func (e *TapeChangerError) Error() string {
+	return "spanning требует интерактивной смены кассет или демона"
+}
+
+// Is поддерживает errors.Is(err, &TapeChangerError{}).
+func (e *TapeChangerError) Is(target error) bool {
+	_, ok := target.(*TapeChangerError)
+	return ok
+}
+
 // EmptyIndexError — пустой индекс сессии при чтении ленты подряд:
 // достигнут конец записанных сессий (EOD) либо повреждена граница.
 type EmptyIndexError struct{}

@@ -22,17 +22,22 @@ package port
 // Фазы длительных операций (ProgressUpdate.Phase); совпадают со
 // значениями phase в REST-прогрессе.
 const (
-	PhaseScan     = "scan"     // сканирование ФС
-	PhaseWrite    = "write"    // запись на ленту / чтение с ленты
-	PhaseFinalize = "finalize" // фиксация каталога и filemark'ов
+	PhaseScan       = "scan"        // сканирование ФС
+	PhaseWrite      = "write"       // запись на ленту / чтение с ленты
+	PhaseFinalize   = "finalize"    // фиксация каталога и filemark'ов
+	PhaseTapeChange = "tape_change" // ожидание смены кассеты (spanning)
 )
 
 // ProgressUpdate — снимок прогресса длительной операции.
 type ProgressUpdate struct {
-	Phase          string // PhaseScan | PhaseWrite | PhaseFinalize
+	Phase          string // PhaseScan | PhaseWrite | PhaseFinalize | PhaseTapeChange
 	CurrentFile    string // обрабатываемый файл; "" — не применимо
 	ProcessedBytes int64  // обработано байт
 	TotalBytes     int64  // всего байт; 0 — неизвестно
+
+	// Message — текст для оператора (например, просьба вставить
+	// следующую кассету); "" — не применимо.
+	Message string
 }
 
 // ProgressReporter — приёмник обновлений прогресса.

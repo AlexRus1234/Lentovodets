@@ -57,7 +57,7 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		defer closeTape(s, tape)
 		uc := backup.New(s.deps.Config, tape, s.deps.Codec, s.deps.Catalog,
 			s.deps.FS, s.deps.Hasher, s.deps.Rand, s.deps.Clock,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log)
+			NewTaskProgress(task, s.deps.Clock), s.deps.Log, nil) // changer: pause/resume демона — позже
 		if _, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full}); err != nil {
 			task.finishError(err, s.deps.Clock.Now()) // идемпотентно после prog.Fail
 		}

@@ -214,3 +214,25 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestNextTapeName(t *testing.T) {
+	cases := []struct {
+		job, current, want string
+	}{
+		{"daily", "media-013", "media-014"},            // инкремент, ширина сохранена
+		{"daily", "media-009", "media-010"},            // ширина 3 не сужается
+		{"daily", "media-999", "media-1000"},           // расширение на переносе
+		{"daily", "t-1", "t-2"},                        //
+		{"daily", "T1", "T2"},                          //
+		{"daily", "123", "124"},                        // имя целиком из цифр
+		{"daily", "media-", "daily-002"},               // суффикс пустой — не цифры
+		{"daily", "backup", "daily-002"},               // суффикса нет
+		{"", "backup", "backup-002"},                   // задание не задано — от текущего
+		{"daily", "99999999999999999999", "daily-002"}, // переполнение Atoi
+	}
+	for _, tc := range cases {
+		if got := domain.NextTapeName(tc.job, tc.current); got != tc.want {
+			t.Errorf("NextTapeName(%q, %q) = %q; want %q", tc.job, tc.current, got, tc.want)
+		}
+	}
+}

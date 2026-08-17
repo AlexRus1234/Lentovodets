@@ -107,4 +107,9 @@ type Deps struct {
 
 	// AskPassword — интерактивный ввод пароля для daemon-логина.
 	AskPassword func() (string, error)
+
+	// IsInteractive сообщает, доступен ли интерактивный ввод
+	// (stdin — терминал): решает, можно ли задать вопрос оператору
+	// (смена кассеты spanning). nil — всегда false.
+	IsInteractive func() bool
 }

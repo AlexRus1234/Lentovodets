@@ -85,6 +85,10 @@ func DefaultDeps(version string) Deps {
 			fmt.Fprint(os.Stderr, "пароль демона: ")
 			return readLine(bufio.NewScanner(os.Stdin))
 		},
+		IsInteractive: func() bool {
+			fi, err := os.Stdin.Stat()
+			return err == nil && fi.Mode()&os.ModeCharDevice != 0
+		},
 	}
 }
 

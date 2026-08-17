@@ -60,6 +60,7 @@ type Task struct {
 	processed   int64
 	total       int64
 	errText     string
+	message     string // текст оператору (смена кассеты spanning)
 	startedAt   time.Time
 	finishedAt  time.Time
 	logs        []string
@@ -82,6 +83,7 @@ type taskProgressJSON struct {
 	SpeedMbps      float64  `json:"speed_mbps"`
 	Logs           []string `json:"logs"`
 	Error          string   `json:"error"`
+	Message        string   `json:"message"`
 }
 
 // Snapshot возвращает неизменяемый снимок прогресса задачи.
@@ -109,6 +111,7 @@ func (t *Task) Snapshot() taskProgressJSON {
 		SpeedMbps:      t.speedBps / (1024 * 1024),
 		Logs:           logs,
 		Error:          t.errText,
+		Message:        t.message,
 	}
 }
 
@@ -132,6 +135,11 @@ func (t *Task) update(u port.ProgressUpdate, now time.Time) {
 	t.lastSample, t.lastBytes = now, u.ProcessedBytes
 	t.phase, t.currentFile = u.Phase, u.CurrentFile
 	t.processed, t.total = u.ProcessedBytes, u.TotalBytes
+	if u.Message != "" {
+		t.message = u.Message
+		t.appendLogLocked(u.Message) // события оператора — без троттлинга
+		return
+	}
 	if now.Sub(t.lastLogAt) >= minLogInterval {
 		t.appendLogLocked(fmt.Sprintf("[%s] %s (%s / %s)",
 			u.Phase, u.CurrentFile, humanBytes(u.ProcessedBytes), humanBytes(u.TotalBytes)))

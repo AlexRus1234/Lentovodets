@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -137,6 +138,29 @@ func (rt *runtime) runLocal(fn func(ctx context.Context, tape port.Tape, cat por
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return fn(ctx, tape, cat)
+}
+
+// runLocalTape — runLocal для команд, меняющих ленту в процессе
+// (spanning-бекап):changer закрывает исходную ленту сам, повторное
+// закрытие подавляется обёрткой closeOnce.
+func (rt *runtime) runLocalTape(fn func(ctx context.Context, tape port.Tape, cat port.Catalog) error) error {
+	return rt.runLocal(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+		return fn(ctx, &closeOnce{Tape: tape}, cat)
+	})
+}
+
+// closeOnce — port.Tape, закрываемый не более одного раза: повторное
+// закрытие возвращает результат первого.
+type closeOnce struct {
+	port.Tape
+	once sync.Once
+	err  error
+}
+
+// Close закрывает ленту один раз.
+func (t *closeOnce) Close() error {
+	t.once.Do(func() { t.err = t.Tape.Close() })
+	return t.err
 }
 
 // dial — клиент демона для daemon-команд.

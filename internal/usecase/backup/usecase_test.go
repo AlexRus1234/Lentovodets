@@ -103,6 +103,7 @@ type harness struct {
 	fs          *testutil.MapFS
 	uc          *backup.UseCase
 	prog        *progRecorder
+	changer     port.TapeChanger // nil — смена кассет недоступна
 }
 
 func (h *harness) tape() port.Tape {
@@ -146,7 +147,7 @@ func (h *harness) build(t port.Tape) *backup.UseCase {
 	}
 	return backup.New(cfg, t, h.codec, cat, h.fs,
 		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
-		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger())
+		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger(), h.changer)
 }
 
 // progRecorder собирает события прогресса.
@@ -345,7 +346,7 @@ func TestBackup_MirrorTombstoneStats(t *testing.T) {
 		h.tape(), h.codec, h.cat, h.fs,
 		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
 		testutil.FixedRand("run-2"), testutil.FixedClock(fixedTime),
-		h.prog, testutil.NoopLogger())
+		h.prog, testutil.NoopLogger(), nil)
 
 	res, err := h.uc.Backup(ctx, "daily", backup.Options{})
 	if err != nil {
@@ -621,7 +622,7 @@ func TestBackup_ConfigError(t *testing.T) {
 	h := newHarness(t, map[string]string{"etc/hosts": "x"})
 	boom := errors.New("boom")
 	h.uc = backup.New(&fakeConfig{err: boom}, h.rec, h.codec, h.cat, h.fs,
-		nil, testutil.FixedRand("u"), testutil.FixedClock(fixedTime), nil, testutil.NoopLogger())
+		nil, testutil.FixedRand("u"), testutil.FixedClock(fixedTime), nil, testutil.NoopLogger(), nil)
 	if _, err := h.uc.Backup(context.Background(), "daily", backup.Options{}); !errors.Is(err, boom) {
 		t.Fatalf("Backup: %v; want boom", err)
 	}
@@ -860,28 +861,27 @@ func TestBackup_FileTooLargeBeforeWrite(t *testing.T) {
 	}
 }
 
-// TestBackup_MultiPartContinuesSingleTape — части >1 без spanning:
-// поведение не меняется, сессия пишется целиком одной кассетой.
-func TestBackup_MultiPartContinuesSingleTape(t *testing.T) {
+// TestBackup_SpanningRequiresChanger — планировщик дал частей >1,
+// а смена кассет недоступна (changer nil): TapeChangerError до записи,
+// лента и каталог не тронуты.
+func TestBackup_SpanningRequiresChanger(t *testing.T) {
 	h := newHarness(t, spanFiles())
 	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
 	h.rebuild()
-	res, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
-	if err != nil {
-		t.Fatalf("Backup: %v", err)
+	_, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+	if !errors.Is(err, &domain.TapeChangerError{}) {
+		t.Fatalf("Backup: %v; want TapeChangerError", err)
 	}
-	if res.PlannedParts != 3 {
-		t.Errorf("PlannedParts = %d; want 3", res.PlannedParts)
+	if len(h.codec.WroteHeaders) != 0 || h.fakeTape.MarkCount() != 2 {
+		t.Errorf("лента тронута: записей %d, меток %d; want 0/2 (только ярлык)",
+			len(h.codec.WroteHeaders), h.fakeTape.MarkCount())
 	}
-	if res.Session.Num != 1 {
-		t.Errorf("сессия: %+v; want Num=1", res.Session)
+	sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+	if len(sessions) != 0 {
+		t.Errorf("сессия создана перед записью: %+v", sessions)
 	}
-	files, err := h.cat.GetFilesBySession(context.Background(), res.Session.ID)
-	if err != nil {
-		t.Fatalf("GetFilesBySession: %v", err)
-	}
-	if len(files) != 4 { // /etc + три файла
-		t.Errorf("файлов в каталоге %d; want 4", len(files))
+	if h.prog.fails != 0 || h.prog.done != 0 {
+		t.Errorf("прогресс: fails=%d done=%d; want 0/0 (сбой до записи)", h.prog.fails, h.prog.done)
 	}
 }
 
@@ -933,15 +933,17 @@ func TestBackup_AppendMinTailForcesNewTape(t *testing.T) {
 }
 
 // TestBackup_AppendTapeOverCapacity — занято больше capacity:
-// остаток зажимается нулём, без отрицательного бюджета.
+// остаток зажимается нулём, без отрицательного бюджета. Первая сессия
+// пишется со выключенным spanning (capacity 0) — одна часть.
 func TestBackup_AppendTapeOverCapacity(t *testing.T) {
-	h := newHarness(t, spanFiles()) // 170 байт при capacity 100
-	h.cfg = &fakeConfig{jobs: jobsAppend(), capacity: 100}
+	h := newHarness(t, spanFiles()) // 170 байт
+	h.cfg = &fakeConfig{jobs: jobsAppend()}
 	h.rebuild()
 	ctx := context.Background()
 	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
 		t.Fatalf("Backup#1: %v", err)
 	}
+	h.cfg.capacity = 100
 	h.fs.MapFS["etc/hosts"] = &fstest.MapFile{Data: []byte("changed"), Mode: 0o644, ModTime: time.Unix(99, 0)}
 	res, err := h.uc.Backup(ctx, "daily", backup.Options{DryRun: true})
 	if err != nil {

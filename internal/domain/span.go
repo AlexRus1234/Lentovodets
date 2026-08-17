@@ -114,3 +114,26 @@ func spanCost(fm FileMeta) int64 {
 	}
 	return fm.Size
 }
+
+// NextTapeName предлагает имя следующей кассеты spanning-цепочки:
+// инкремент числового суффикса текущего имени с сохранением ширины
+// (media-013 → media-014, t-1 → t-2); имени без суффикса — <job>-002
+// (пустое задание — текущее имя с суффиксом). Имя следующей кассеты
+// должно быть решено до записи блока-указателя продолжения
+// (UUID следующей кассеты неизвестен до её форматирования).
+func NextTapeName(job, current string) string {
+	i := len(current)
+	for i > 0 && current[i-1] >= '0' && current[i-1] <= '9' {
+		i--
+	}
+	if i < len(current) {
+		if n, err := strconv.Atoi(current[i:]); err == nil {
+			return fmt.Sprintf("%s%0*d", current[:i], len(current)-i, n+1)
+		}
+	}
+	base := job
+	if base == "" {
+		base = current
+	}
+	return base + "-002"
+}

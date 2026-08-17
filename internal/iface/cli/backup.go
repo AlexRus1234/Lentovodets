@@ -21,6 +21,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,9 +29,11 @@ import (
 	"lentovodec/internal/usecase/backup"
 )
 
-// newBackupCmd — `lentovodec backup <job> [--full] [--dry-run]`.
+// newBackupCmd — `lentovodec backup <job> [--full] [--dry-run]
+// [--next-tape NAME]`.
 func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	var full, dryRun bool
+	var nextTape string
 	cmd := &cobra.Command{
 		Use:   "backup <job>",
 		Short: "Запустить задание бекапа (прямой доступ к ленте)",
@@ -40,9 +43,14 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rt.runLocal(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+			return rt.runLocalTape(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+				changer := &stdinChanger{
+					deps: deps, cfg: rt.cfg, cat: cat, codec: deps.Codec,
+					rand: deps.Rand, clock: deps.Clock, log: rt.logger(),
+					job: args[0], nextName: nextTape,
+				}
 				uc := backup.New(rt.cfg, tape, deps.Codec, cat, deps.FS,
-					deps.Hasher, deps.Rand, deps.Clock, nil, rt.logger())
+					deps.Hasher, deps.Rand, deps.Clock, nil, rt.logger(), changer)
 				res, err := uc.Backup(ctx, args[0], backup.Options{Full: full, DryRun: dryRun})
 				if err != nil {
 					return err
@@ -53,6 +61,9 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 				}
 				rt.printf("сессия #%d %s (id %d) на кассете %s\n",
 					res.Session.Num, res.Session.Type, res.Session.ID, res.Session.TapeUUID)
+				if res.Parts > 1 {
+					rt.printf("частей %d на кассетах: %s\n", res.Parts, strings.Join(res.Tapes, ", "))
+				}
 				rt.printf("%s\n", statsLine(res.Stats))
 				return nil
 			})
@@ -60,6 +71,8 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "полный бекап (перезапись ленты с сессии 1)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "только сканирование, без записи")
+	cmd.Flags().StringVar(&nextTape, "next-tape", "",
+		"имя следующей кассеты для неинтерактивного spanning (--next-tape media-014)")
 	return cmd
 }
 

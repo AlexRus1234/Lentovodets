@@ -112,6 +112,12 @@ func TestTypedErrors(t *testing.T) {
 			"не является указателем продолжения",
 			&domain.NotContinuationError{},
 		},
+		{
+			"смена кассет недоступна",
+			&domain.TapeChangerError{},
+			"spanning требует интерактивной смены кассет или демона",
+			&domain.TapeChangerError{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
