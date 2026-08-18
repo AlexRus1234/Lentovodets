@@ -28,7 +28,7 @@ type statusResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
 	Device  string `json:"device"`
-	Tape    bool   `json:"tape"` // устройство доступно (probe open)
+	Tape    bool   `json:"tape"` // устройство доступно (probe open; занятое задачей — доступно)
 }
 
 // settingsResponse — ответ GET /api/settings.
@@ -42,15 +42,21 @@ type settingsRequest struct {
 }
 
 // handleStatus — healthcheck без аутентификации: версия и доступность
-// устройства (probe = открытие и закрытие).
+// устройства (probe = открытие и закрытие). Устройство, занятое
+// фоновой задачей или другой операцией, считается доступным: оно
+// открыто владельцем; ожидание освобождения заняло бы часы.
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	device := s.currentDevice()
-	tape := true
-	if t, err := s.openTape(); err != nil {
-		tape = false
-	} else if err := t.Close(); err != nil {
-		s.deps.Log.Warn("web: закрытие probe-ленты", "error", err.Error())
-	}
+	tape := s.gate.probe(func() error {
+		t, err := s.openTape()
+		if err != nil {
+			return err
+		}
+		if err := t.Close(); err != nil {
+			s.deps.Log.Warn("web: закрытие probe-ленты", "error", err.Error())
+		}
+		return nil
+	})
 	writeJSON(w, http.StatusOK, statusResponse{
 		Status: "ok", Version: s.deps.Version, Device: device, Tape: tape,
 	})

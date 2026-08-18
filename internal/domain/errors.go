@@ -297,3 +297,17 @@ func (e *NotContinuationError) Is(target error) bool {
 	_, ok := target.(*NotContinuationError)
 	return ok
 }
+
+// NoMediumError — в приводе нет кассеты: open или ioctl st-драйвера
+// вернул ENOMEDIUM («no medium found»). iface-слои показывают текст
+// ошибки вместо сырого errno (web: 409 code=no_medium).
+type NoMediumError struct{}
+
+// Error реализует интерфейс error.
+func (e *NoMediumError) Error() string { return "нет кассеты в приводе" }
+
+// Is поддерживает errors.Is(err, &NoMediumError{}).
+func (e *NoMediumError) Is(target error) bool {
+	_, ok := target.(*NoMediumError)
+	return ok
+}

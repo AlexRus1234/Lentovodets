@@ -137,8 +137,11 @@ func (d *webDaemon) Run(ctx context.Context) error {
 	return err
 }
 
-// friendlyTapeError превращает EACCES/ENOENT в подсказку rootless-модели
-// (SPEC §9.1): критерий доступа — probe устройства, не uid.
+// friendlyTapeError превращает типовые ошибки устройства в подсказки
+// оператору: EACCES/ENOENT — rootless-модель (SPEC §9.1), ENOMEDIUM —
+// нет кассеты, EBUSY — устройство занято другим процессом (например,
+// демоном). Строковая проверка errno — конвенция проекта (см.
+// mapTapeFull в usecase/backup): iface не импортирует syscall.
 func friendlyTapeError(err error, device string) error {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
@@ -148,6 +151,12 @@ func friendlyTapeError(err error, device string) error {
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf(
 			"устройство %s не найдено (%w)\nподсказка: проверьте, что стример подключён и устройство существует (ls /dev/nst*)",
+			device, err)
+	case strings.Contains(err.Error(), "no medium found"):
+		return fmt.Errorf("нет кассеты в приводе (%w)\nподсказка: вставьте кассету и повторите", err)
+	case strings.Contains(err.Error(), "device or resource busy"):
+		return fmt.Errorf(
+			"устройство %s занято другим процессом (%w)\nподсказка: возможно, демон уже использует стример (systemctl status lentovodec)",
 			device, err)
 	default:
 		return err

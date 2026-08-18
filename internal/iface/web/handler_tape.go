@@ -24,6 +24,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"lentovodec/internal/domain"
+	"lentovodec/internal/port"
 	"lentovodec/internal/usecase/catalog"
 	"lentovodec/internal/usecase/format"
 )
@@ -45,20 +47,14 @@ type tapeLabelJSON struct {
 
 // handleTapeInfo — прочитать ярлык установленной ленты.
 func (s *Server) handleTapeInfo(w http.ResponseWriter, r *http.Request) {
-	tape, err := s.openTape()
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_open")
-		return
-	}
-	defer func() {
-		if err := tape.Close(); err != nil {
-			s.deps.Log.Warn("web: закрытие ленты после info", "error", err.Error())
-		}
-	}()
-	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
-	info, err := uc.TapeInfo(r.Context())
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_info")
+	var info domain.TapeInfo
+	if err := s.withTape(func(tape port.Tape) error {
+		uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
+		var err error
+		info, err = uc.TapeInfo(r.Context())
+		return err
+	}); err != nil {
+		writeTapeErr(w, err, "tape_info")
 		return
 	}
 	writeJSON(w, http.StatusOK, tapeInfoResponse{
@@ -75,19 +71,11 @@ func (s *Server) handleTapeInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleTapeEject — извлечь ленту (MTOFFL).
 func (s *Server) handleTapeEject(w http.ResponseWriter, r *http.Request) {
-	tape, err := s.openTape()
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_open")
-		return
-	}
-	defer func() {
-		if err := tape.Close(); err != nil {
-			s.deps.Log.Warn("web: закрытие ленты после eject", "error", err.Error())
-		}
-	}()
-	uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
-	if err := uc.Eject(r.Context()); err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_eject")
+	if err := s.withTape(func(tape port.Tape) error {
+		uc := catalog.New(s.deps.Catalog, tape, s.deps.Codec, nil, s.deps.Log, nil)
+		return uc.Eject(r.Context())
+	}); err != nil {
+		writeTapeErr(w, err, "tape_eject")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -102,20 +90,14 @@ func (s *Server) handleTapeFormat(w http.ResponseWriter, r *http.Request) {
 	}
 	force := isTruthy(r.URL.Query().Get("force"))
 
-	tape, err := s.openTape()
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_open")
-		return
-	}
-	defer func() {
-		if err := tape.Close(); err != nil {
-			s.deps.Log.Warn("web: закрытие ленты после format", "error", err.Error())
-		}
-	}()
-	uc := format.New(tape, s.deps.Codec, s.deps.Catalog, s.deps.Rand, s.deps.Clock, s.deps.Log)
-	label, err := uc.Format(r.Context(), name, force)
-	if err != nil {
-		writeErr(w, statusFor(err), err.Error(), "tape_format")
+	var label domain.TapeLabel
+	if err := s.withTape(func(tape port.Tape) error {
+		uc := format.New(tape, s.deps.Codec, s.deps.Catalog, s.deps.Rand, s.deps.Clock, s.deps.Log)
+		var err error
+		label, err = uc.Format(r.Context(), name, force)
+		return err
+	}); err != nil {
+		writeTapeErr(w, err, "tape_format")
 		return
 	}
 	s.deps.Log.Info("tape formatted",

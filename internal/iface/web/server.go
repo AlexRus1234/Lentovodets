@@ -84,6 +84,7 @@ type Server struct {
 	tasks  *TaskRegistry
 	router chi.Router
 	bind   string
+	gate   tapeGate // сериализация доступа к устройству ленты (st: один FD)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -232,9 +233,30 @@ func (s *Server) setDevice(device string) {
 	s.device = device
 }
 
-// openTape открывает ленту на текущем устройстве.
+// openTape открывает ленту на текущем устройстве. Вызывается только
+// владельцем устройства из tapeGate: внутри withTape, задачей (после
+// acquireTask) или changer'ом задачи — параллельный open получил бы
+// EBUSY от st-драйвера.
 func (s *Server) openTape() (port.Tape, error) {
 	return s.deps.OpenTape(s.currentDevice())
+}
+
+// withTape — короткая операция с лентой: под защитой tapeGate открыть
+// устройство, выполнить fn, закрыть. Занятость фоновой задачей —
+// tapeBusyError (409), ошибки открытия/операции — как есть.
+func (s *Server) withTape(fn func(tape port.Tape) error) error {
+	return s.gate.withOp(func() error {
+		tape, err := s.openTape()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := tape.Close(); cerr != nil {
+				s.deps.Log.Warn("web: закрытие ленты", "error", cerr.Error())
+			}
+		}()
+		return fn(tape)
+	})
 }
 
 // --- вспомогательные HTTP-функции ---
@@ -251,6 +273,24 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeErr отправляет ошибку в формате SPEC §6: {"error", "code"}.
 func writeErr(w http.ResponseWriter, status int, msg, code string) {
 	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}
+
+// writeTapeErr — ошибка операции с лентой в ответе API: занятость
+// фоновой задачей — 409 task_running; errno ENOMEDIUM (st-драйвер без
+// кассеты, open или ioctl — «no medium found») — 409 no_medium с
+// понятным текстом. Строковая проверка errno — конвенция проекта
+// (см. mapTapeFull в usecase/backup): iface не импортирует syscall.
+func writeTapeErr(w http.ResponseWriter, err error, code string) {
+	var busy tapeBusyError
+	if errors.As(err, &busy) {
+		writeErr(w, http.StatusConflict, busy.Error(), "task_running")
+		return
+	}
+	if strings.Contains(err.Error(), "no medium found") {
+		writeErr(w, http.StatusConflict, (&domain.NoMediumError{}).Error(), "no_medium")
+		return
+	}
+	writeErr(w, statusFor(err), err.Error(), code)
 }
 
 // statusFor подбирает HTTP-код по доменной ошибке.

@@ -40,8 +40,9 @@ type taskIDResponse struct {
 
 // handleBackupStart — POST /api/backup/start?job=&full=.
 //
-// Фоновая задача открывает ленту на время бекапа и закрывает после:
-// устройство не удерживается между операциями.
+// Фоновая задача захватывает устройство ленты до конца бекапа
+// (tapeGate): probe статуса видит его доступным, короткие операции
+// tape/* — 409; открытие/смена кассет внутри задачи — через changer.
 func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 	jobName := r.URL.Query().Get("job")
 	if jobName == "" {
@@ -51,6 +52,8 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 	full := isTruthy(r.URL.Query().Get("full"))
 
 	id, err := s.startTapeTask("backup", func(task *Task) {
+		s.gate.acquireTask()
+		defer s.gate.releaseTask()
 		tape, err := s.openTape()
 		if err != nil {
 			task.finishError(err, s.deps.Clock.Now())
@@ -93,6 +96,8 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := s.startTapeTask("restore", func(task *Task) {
+		s.gate.acquireTask()
+		defer s.gate.releaseTask()
 		tape, err := s.openTape()
 		if err != nil {
 			task.finishError(err, s.deps.Clock.Now())
