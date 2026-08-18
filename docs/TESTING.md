@@ -45,9 +45,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 ```bash
 go test ./...                              # unit + integration
 go test -race ./...                        # то же + race detector
+go test ./test/integration/... -count=5    # интеграционные (стандарт Этапа 9+)
 go test -tags=tape ./test/hardware/...     # только вручную, на машине со стримером
 go test -cover ./internal/...              # coverage по бизнес-логике
 ```
+
+**Интеграционные сценарии** (`test/integration/`, реальные адаптеры
+filetape + osfs + sqlite + tapeformat + xxhash, фейки не используются;
+харнесс — `harness_test.go`):
+
+| Файл                  | Сценарии                                                    |
+| --------------------- | ----------------------------------------------------------- |
+| `backup_restore_test.go` | format → backup → eject-simulated → readtest → restore full; INC-дозапись, selective |
+| `mirror_test.go`      | mirror-сессии, tombstone'ы, реконструкция зеркала           |
+| `smart_restore_test.go` | копии файла, повреждённая копия, fallback                   |
+| `tapefull_test.go`    | ENOSPC-откат к старому EOD, readtest чистого хвоста, дозапись |
+| `spanning_test.go`    | дозапись с делением на две кассеты; ENOSPC-перенос части; restore full по цепочке (DR + каталог); контракт «голый tar» (`Rewind → FSF(2) → блоки до filemark → archive/tar`); mirror + spanning. Смена кассет — авто-фабрика `spanFarm` поверх `testutil.FuncChanger` (Этап 11) |
+| `hardware/spanning_test.go` | ручной сценарий на двух реальных кассетах (`tape && linux`), смена по промпту, DR-рецепт mt/dd/tar в шапке файла |
 
 ## 3. Test doubles
 
@@ -136,7 +150,18 @@ JSON-ярлыки в golden-тестах. `StepClock` даёт строго во
 Двойник `port.ConfigSource` с фиксированным списком заданий (поле
 `JobList`); остальные геттеры возвращают нулевые значения. Нужен
 интеграционным и hardware-тестам, собирающим реальный
-`backup.UseCase` без TOML-файла.
+`backup.UseCase` без TOML-файла. Поля `CapacityBytes`/`MinTailBytes`
+включают планировщик частей spanning.
+
+### 3.7. `FuncChanger`
+
+Двойник `port.TapeChanger` поверх замыканий (`Suggest`/`Close`/`Request`);
+незаданное замыкание заменяется разумным умолчанием, все запросы смены
+кассет запоминаются (`Requests`, `Closed`) — assertions на причины
+(`span`/`enospc`/`restore`) и порядок. В unit-тестах use case'ов выдаёт
+`FakeTape`-кассеты (фабрика `tapeFarm`); в интеграционных — файл-ленты
+`filetape` с форматированием через реальный `format.UseCase` (фабрика
+`spanFarm`, `test/integration/spanning_test.go`).
 
 ## 4. Coverage цели
 

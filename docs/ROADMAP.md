@@ -723,3 +723,128 @@ e2e-сценарий API прогнан вручную — см. выше).
 >   таблица CLI, Web UI + SSH-туннель, rootless-развёртывание
 >   (useradd/udev/systemd-харднинг, SPEC §9.1), CI, dev-команды;
 > - `docs/CHANGELOG.md` — Keep-a-Changelog каркас + запись 1.0.0.
+
+---
+
+## Этап 11 — Spanning (многотомные бекапи) — ЗАВЕРШЁН
+
+> **Статус: завершён** (коммиты `3fc6de6`…`51e1f22` + сессия 8, 2026-08-18).
+> Реализация разбита на 8 сессий по плану `логи/тома.md` (карта дизайна);
+> каждая сессия — отдельный коммит с зелёными гейгами. Итоговые гейты
+> этапа: `golangci-lint run ./...`, `go vet ./...`, `go build ./...`,
+> `go build -tags tape ./...`, `go test -race ./...`,
+> `go test ./test/integration/... -count=5`,
+> `GOOS=linux go vet -tags=tape ./test/hardware/...`, кросс-сборка
+> `GOOS=linux` amd64/arm64 с тегом `tape`, `make web-build` — зелёные.
+> Покрытие: domain **97.7%**, usecase backup **96.6%** / restore **95.6%**
+> / catalog **99.0%** / format **95.7%** / scan **97.1%**, tapeformat
+> **100%**, filetape **96.5%**, sqlite **92.2%** (цели AGENTS.md
+> выполнены), total 87.3% (как в Этапе 10 — тянут вниз плановые 60–80%
+> iface). Hardware-сценарий spanning (`test/hardware/spanning_test.go`)
+> на реальном приводе не прогонялся — запуск вручную по инструкции
+> в шапке файла.
+>
+> **Что сделано (по сессиям):**
+> 1. **ENOSPC-откат + filetape-лимит** (`3fc6de6`): сбой записи сессии
+>    откатывает ленту к старому EOD (`Rewind + MTFSF(2K+1) + WriteEOF×2`,
+>    новых методов port.Tape не потребовалось) — закрыт латентный баг
+>    грязного хвоста; `filetape.OpenCapacity` — ENOSPC в CI без привода.
+> 2. **Планировщик частей** (`60c07e5`): `domain.ParseSize`/`PlanSpan`
+>    (жадный разрез по границам файлов в порядке сканера), конфиг
+>    `capacity`/`min_tail`, честная `FileTooLargeError` до записи.
+> 3. **Формат** (`5601686`): `part`/`continues` в индексе сессии,
+>    continuation-блок `{"kind":"continuation",...}` перед закрывающей
+>    EOD-парой, `ContinuationError`/`NotContinuationError`; `FormatVersion`
+>    не поднимался — изменения аддитивные (решение сессии 3).
+> 4. **Каталог** (`8ea1862`): колонка `sessions.part` (миграция
+>    `PRAGMA user_version` 0→1), `GetSessionChain(jobRunID)`, `part`
+>    в REST и CLI.
+> 5. **Цикл частей бекапа** (`0025cd4`): `usecase/backup/span.go` — части
+>    по кассетам, указатели продолжения, аварийный ENOSPC-перенос
+>    (два подряд с бюджетом capacity — ошибка «уменьшите capacity»),
+>    порт `TapeChanger`, CLI-промпт `stdinChanger` + `--next-tape`.
+> 6. **Restore/ReadTest по цепочке** (`a9fb0f1`): `ChainFollower` — смена
+>    кассеты со сверкой имени ярлыка и обратной ссылки `continues`
+>    (`ChainMismatchError` до восстановления данных), DR-семантика
+>    (каталог не нужен), отчёт `ReadTest` по каждой кассете.
+> 7. **Демон и Web UI** (`51e1f22`): состояние задачи `awaiting_tape`
+>    (message + suggested_tape_name), `POST /api/tasks/{id}/continue`,
+>    `daemonChanger` поверх TaskRegistry, диалог продолжения в UI;
+>    ожидающая задача занимает стример, graceful shutdown закрывает
+>    ожидание сразу.
+> 8. **Интеграция, канон-доки, hardware** (сессия 8, этот коммит) — см.
+>    ниже.
+>
+> **Сессия 8 — интеграция и доки.** Зафиксированные решения и
+> отступления:
+> - `test/integration/spanning_test.go` (харнесс Этапа 9,
+>   `OpenCapacity` из сессии 1): 5 сценариев — дозапись с делением
+>   (цепочка GetSessionChain, указатель на ленте-1, EOD-инварианты
+>   2K+3 обеих лент, заголовок части 2 `Num=1/FULL/Part=2/Continues`),
+>   ENOSPC-авария (оценка планировщика не учитывает индекс и добивку
+>   блоков → перенос части, лента-1 чистая по readtest, данные целы),
+>   restore full по цепочке с пустым каталогом (DR) и с каталогом,
+>   контракт «голый tar» (`Rewind → FSF(2) → блоки до filemark →
+>   archive/tar` — эквивалент `mt fsf 2 && dd bs=256k | tar -x`,
+>   часть восстанавливается без лентоводеческих декодеров),
+>   mirror + spanning (tombstone в части, реконструкция зеркала по
+>   цепочке); `-count=5` зелёные;
+> - смена кассет в интеграционных тестах — авто-фабрика `spanFarm`
+>   поверх `testutil.FuncChanger` (свежая filetape-кассета:
+>   форматирование и регистрация реальным format.UseCase; для чтения —
+>   выдача существующей по имени из указателя), «извлечение кассеты» —
+>   `remountTape1` (changer закрывает дескриптор харнесса, повторное
+>   закрытие невозможно);
+> - `test/hardware/spanning_test.go` (`tape && linux`): ручной сценарий
+>   на двух кассетах (capacity из `LENTOVODEC_TAPE_SPAN_CAPACITY`
+>   меньше реальной — бекап делится, смена по промпту в stdin/stderr,
+>   readtest и restore по цепочке, побайтовое сравнение); DR-проверка
+>   фактическим mt/dd/tar — шаги оператора в шапке файла
+>   (автоматический эквивалент — интеграционный тест выше);
+> - **исправлен латентный баг сессии 5**, найденный гейтом
+>   `GOOS=linux go vet -tags=tape`: `test/hardware/backup_test.go` не
+>   обновили под новый параметр `changer` в `backup.New` (файл
+>   компилируется только с тегом `tape` — локальные гейты Windows его
+>   не видели);
+> - канон-доки: FORMAT §4.1 (раскладка части, инвариант меток с
+>   continuation-хвостом), §6 (`part`/`continues`), §6.1
+>   (continuation-блок), §9 (правила перемотки цепочек), §11
+>   (аддитивность без bump версии), §12 (DR-рецепт mt/dd/tar);
+>   SPECIFICATION §2.6 (`Session.Part`), §3 (`part` + `GetSessionChain`
+>   + миграция), §4.2/§4.3/§8 приведены к реализации; ARCHITECTURE —
+>   `TapeChanger` в портах и ветка частей в §4.1, дерево port/ пополнено
+>   (tapechanger/tapecodec/hasher); TESTING — таблица интеграционных
+>   сценариев, §3.7 FuncChanger; CHANGELOG — Fixed-запись про ENOSPC-откат;
+>   docs/func/ru: tape-format.md (части, указатель, DR-рецепт), README —
+>   строка «многотомные бекапи» (features/cli/api были обновлены
+>   сессиями 5–7).
+>
+> **Отступления от карты «тома»:** без существенных — единственное
+> содержательное отклонение (геометрия continuation-блока между tar
+> и EOD-парой вместо эскиза «после пары») продиктовано семантикой
+> MTFSF-чтения и зафиксировано в FORMAT §6.1 ещё сессией 3.
+
+**Файлы (этап целиком):**
+- `internal/domain/span.go`, `errors.go` — ParseSize, PlanSpan,
+  NextTapeName, FileTooLargeError/TapeChangerError/ChainMismatchError/
+  ContinuationError/NotContinuationError.
+- `internal/port/tapechanger.go`, `tapecodec.go`, `catalog.go`,
+  `progress.go` — TapeChanger, SessionHeader.Part/Continues,
+  Continuation, ReadHeader, GetSessionChain, PhaseTapeChange/Message.
+- `internal/usecase/backup/{usecase,span}.go` — планировщик, цикл частей,
+  ENOSPC-перенос, restoreEOD.
+- `internal/usecase/restore/chain.go`, `usecase/catalog/usecase.go` —
+  ChainFollower, TapeReport.
+- `internal/adapter/tapeformat/continuation.go` (+ golden),
+  `sqlite/migrations.go`, `filetape` (OpenCapacity),
+  `tomlconfig` (capacity/min_tail).
+- `internal/iface/cli/tapechanger.go` (stdinChanger/restoreChanger),
+  `internal/iface/web/tapechanger.go`, `taskregistry.go`
+  (awaiting_tape/Continue), Web UI TaskProgress.
+- `test/integration/spanning_test.go`, `test/hardware/spanning_test.go`.
+
+**Тесты:** unit — по пакетам (см. сессии 1–7), интеграционные —
+`-count=5`, hardware — вручную на приводе.
+
+**Готовность:** все гейты сессии-00 зелёные; DR-контракт «голый tar»
+закреплён автоматическим тестом. ✅

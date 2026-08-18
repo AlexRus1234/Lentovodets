@@ -101,9 +101,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | `Type`       | `SessionType` | `"FULL"` или `"INC"`                                  |
 | `Timestamp`  | int64         | Unix-секунды старта сессии                            |
 | `JobRunID`   | string        | UUID запуска (для группировки частей одного бекапа)   |
+| `Part`       | int32         | Номер части в цепочке spanning-запуска, начиная с 1; обычная (не разделённая) сессия — часть 1 |
 
 `Num` вычисляется как `MAX(session_num) + 1` для текущего `tapeUUID`. Первая
-сессия на ленте обязана быть `FULL`.
+сессия на ленте обязана быть `FULL`. Части одного запуска несут общий
+`JobRunID` и лежат на разных кассетах; часть на новой кассете цепочки —
+`Num = 1`, `Type = FULL`, `Part = k` (канон раскладки — FORMAT §4.1).
 
 ### 2.7. `TapeLabel`
 
@@ -128,6 +131,7 @@ CREATE TABLE sessions (
     type        TEXT NOT NULL CHECK (type IN ('FULL', 'INC')),
     timestamp   INTEGER NOT NULL,
     job_run_id  TEXT NOT NULL,
+    part        INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (tape_uuid) REFERENCES tapes(uuid),
     UNIQUE (tape_uuid, session_num)
 );
@@ -157,6 +161,9 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 - `ON DELETE CASCADE` на `files.session_id` — удаление сессии автоматически
   чистит файлы, явный DELETE не нужен (хотя Catalog может делать его явно в
   транзакции для понятности).
+- `part` — номер части spanning-цепочки (§2.6), `DEFAULT 1`: до spanning
+  каждая сессия — часть 1. Существующие БД мигрируются автоматически
+  (`PRAGMA user_version` 0→1, `ALTER TABLE ... ADD COLUMN`).
 - `PRAGMA foreign_keys = ON;` и `PRAGMA journal_mode = WAL;` — обязательно.
 
 ### 3.2. Контракт `port.Catalog`
@@ -171,6 +178,7 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 | `GetLatestFileStates(ctx, paths)`        | Карта path→FileMeta по последней сессии каждого пути  |
 | `ListTapes(ctx)`                         | Все кассеты                                           |
 | `ListSessions(ctx, filter)`              | Сессии с фильтром по tape                             |
+| `GetSessionChain(ctx, jobRunID)`         | Части запуска по `job_run_id`, упорядоченные по `part` |
 | `GetFilesBySession(ctx, sessionID)`      | Все файлы сессии                                      |
 | `GetAllFileCopies(ctx, path)`            | Все сессии, где файл встречается (для smart restore)  |
 | `SearchFiles(ctx, pattern)`              | Глобальный поиск                                      |
@@ -218,15 +226,14 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 меньше `min_tail` — запуск требует смены кассет: use case получает
 их через порт `TapeChanger` (CloseTape / RequestNext /
 SuggestNextName; интерактивный CLI-промпт в local-режиме, pause/resume
-демона — позже). Части пишутся на свои кассеты: каждая — сессия 1
-FULL со своим индексом, `Part = k`, общим `JobRunID` и обратной
-ссылкой `continues`; кассета с продолжением закрывается
-JSON-блоком-указателем (FORMAT §6). `TapeFullError` посреди части —
-откат к старому EOD (сессия 1 плана spanning) и перенос части целиком
+демона — состояние `awaiting_tape`, §6.4). Части пишутся на свои
+кассеты: каждая — сессия 1 FULL со своим индексом, `Part = k`, общим
+`JobRunID` и обратной ссылкой `continues`; кассета с продолжением
+закрывается JSON-блоком-указателем (FORMAT §6.1). `TapeFullError`
+посреди части — откат к старому EOD и перенос части целиком
 на следующую кассету; два подряд переноса с бюджетом полной ёмкости —
-ошибка «уменьшите capacity». Без changer'а (демон до реализации
-pause/resume) запуск с частями >1 завершается `TapeChangerError`
-до записи.
+ошибка «уменьшите capacity». Без changer'а запуск с частями >1
+завершается `TapeChangerError` до записи.
 
 **Семантика mirror:** при `job.Mode == "mirror"` сканер сравнивает текущий
 снимок ФС со снимком последней сессии (любого типа) в каталоге для этого
@@ -262,7 +269,9 @@ tombstone (без tar-вхождения). Это позволяет восст�
 каталог даёт только best-effort отчёт о длине цепочки. Без changer'а
 (например, неинтерактивный запуск) указатель завершает восстановление
 предупреждением «вставьте кассету и перезапустите»; файлы прочитанной
-части уже восстановлены.
+части уже восстановлены. Предельный DR — вообще без лентоводца: каждая
+кассета цепочки читается голым GNU tar (рецепт `mt`/`dd`/`tar` —
+FORMAT §12).
 
 #### `RestoreSelective(ctx, sessionID, paths, destDir)`
 
@@ -527,9 +536,9 @@ Exclude = ["/home/*/.cache/**"]
 бюджет), файл больше бюджета кассеты — `FileTooLargeError` до записи
 (и в DryRun). Бюджет дозаписи — `capacity` минус Σ байт файлов сессий
 кассеты из каталога (tombstone'ы не считаются; индексный overhead не
-учитывается — оценка). Разрез самих сессий по кассетам (spanning) —
-в разработке; до его реализации сессии с несколькими частями
-продолжают писаться одной кассетой с ENOSPC-откатом (§4.2).
+учитывается — оценка, её промах закрывает ENOSPC-перенос §4.2). Разрез
+сессий по кассетам (spanning) — §4.2; restore и readtest по цепочке —
+§4.3, §4.5.
 
 ## 9. Нефункциональные требования
 

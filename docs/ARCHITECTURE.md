@@ -47,11 +47,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
                          └────────────────┬─────────────────────┘
                                           │ зависит только от
                                           ▼
-                         ┌──────────────────────────────────────┐
-                         │     port (интерфейсы) + domain       │
-                         │  Tape, Filesystem, Catalog,          │
-                         │  Progress, Clock, Config             │
-                         └────────────────┬─────────────────────┘
+                          ┌──────────────────────────────────────┐
+                          │     port (интерфейсы) + domain       │
+                          │  Tape, TapeChanger, Filesystem,      │
+                          │  Catalog, Progress, Clock, Config    │
+                          └────────────────┬─────────────────────┘
                                           ▲ реализует
                                           │
                          ┌────────────────┴─────────────────────┐
@@ -90,8 +90,11 @@ lentovodec/
 │   │   └── errors.go          # ErrTapeFull, ErrLabelMismatch, ...
 │   ├── port/                  # ИНТЕРФЕЙСЫ, описанные в терминах domain
 │   │   ├── tape.go            # Tape: блоки + filemark'и + перемотки
+│   │   ├── tapechanger.go     # TapeChanger: смена кассет spanning
+│   │   ├── tapecodec.go       # TapeCodec: ярлык + сессии + указатели
 │   │   ├── filesystem.go      # Walker, FileReader, FileWriter, Stater
 │   │   ├── catalog.go         # CRUD над tapes/sessions/files
+│   │   ├── hasher.go          # xxhash64 файлов
 │   │   ├── progress.go        # ProgressReporter (не чаще 2 Гц)
 │   │   ├── clock.go           # Clock (тестируемое время)
 │   │   ├── rand.go            # Rand (тестируемая случайность)
@@ -156,20 +159,32 @@ lentovodec/
                  │     • append: только Added/Modified             │
                  └────────────────────────┬─────────────────────────┘
                                           ▼
-                 ┌──────────────────────────────────────────────────┐
-                 │  6. sessionID = catalog.CreateSession(...)      │
-                 │  7. если isFull: Tape.Rewind                    │
-                 │     иначе:      Tape.LocateEOD                  │
-                 │  8. tapeformat.WriteSession(tape, files, FS,    │
-                 │                              Progress)          │
-                 │       • индекс + EOF                            │
-                 │       • tar-поток + EOF                         │
-                 │  9. catalog.SaveFiles(sessionID, files)         │
-                 │ 10. return                                      │
-                 └──────────────────────────────────────────────────┘
+                  ┌──────────────────────────────────────────────────┐
+                  │  6. sessionID = catalog.CreateSession(...)      │
+                  │  7. планировщик частей (capacity/min_tail,      │
+                  │     domain.PlanSpan): части по границам файлов  │
+                  │  8. если isFull: Tape.Rewind                    │
+                  │     иначе:      Tape.LocateEOD                  │
+                  │  9. tapeformat.WriteSession(tape, files, FS,    │
+                  │                              Progress)          │
+                  │       • индекс + EOF                            │
+                  │       • tar-поток + EOF                         │
+                  │ 10. catalog.SaveFiles(sessionID, files)         │
+                  │ 11. return                                      │
+                  └──────────────────────────────────────────────────┘
 ```
 
 Каждый шаг использует интерфейс, поэтому тесты подменяют любой из них.
+
+**Ветка частей (spanning, Этап 11).** Частей >1 или остаток кассеты меньше
+`min_tail` — шаги 7–10 выполняет цикл по кассетам (`usecase/backup/span.go`):
+часть пишется на текущую ленту, незаключительная часть закрывается
+блоком-указателем продолжения (FORMAT §6.1), смена кассеты — через порт
+`TapeChanger` (CloseTape → RequestNext; интерактивный промпт CLI или
+pause/resume демона `awaiting_tape`). `TapeFullError` посреди части — откат
+к старому EOD (`Rewind + MTFSF(2K+1) + WriteEOF×2`) и перенос части на
+следующую кассету. Restore/ReadTest следуют цепочке через тот же порт
+(Reason=`restore`), сверяя ярлык и обратную ссылку `continues`.
 
 ### 4.2. `RestoreUseCase`
 

@@ -151,7 +151,7 @@ func TestHardware_FormatBackupRestoreFull(t *testing.T) {
 	t.Logf("formatted: uuid=%s", label.UUID)
 
 	t.Log("backup...")
-	res, err := backup.New(cfg, tp, codec, cat, fsys, hasher, rnd, clock, nil, testutil.NoopLogger()).
+	res, err := backup.New(cfg, tp, codec, cat, fsys, hasher, rnd, clock, nil, testutil.NoopLogger(), nil).
 		Backup(ctx, "hw", backup.Options{})
 	if err != nil {
 		t.Fatalf("backup: %v", err)
