@@ -49,7 +49,11 @@ Root может понадобиться только для путей ФС, з
 
 ## 1. Пользователь и группа
 
+Группа `tape` в Debian/Fedora есть из коробки, в Arch Linux — нет
+(см. §2); создаём при отсутствии:
+
 ```bash
+getent group tape || groupadd -r tape
 useradd --system --home-dir /var/lib/lentovodec --create-home \
         --shell /usr/sbin/nologin lentovodec
 usermod -aG tape lentovodec     # группа вступает в силу в НОВОЙ сессии
@@ -63,21 +67,61 @@ sudo -u lentovodec test -r /dev/nst0 && echo ok
 
 ---
 
-## 2. udev
+## 2. udev и группа устройства
 
-В дистрибутивах с systemd группа `tape` на `/dev/nst*` обычно уже
-назначена; проверьте `ls -l /dev/nst0`. Если нет — правило
+Дефолтная группа на `/dev/nst*` зависит от дистрибутива:
+
+| Дистрибутив                              | `/dev/nst*` по умолчанию | Группа `tape` |
+| ---------------------------------------- | ------------------------ | ------------- |
+| Debian, Fedora (апстримный systemd)      | `root:tape` 0660         | есть          |
+| Arch Linux                               | `root:storage` 0660      | **нет**       |
+
+Arch патчит дефолтные udev-правила systemd
+(`0001-Use-Arch-Linux-device-access-groups.patch`): ленточные ноды
+достаются legacy-группе `storage`, а группы `tape` в поставке нет вообще.
+Типовые грабли первой установки на Arch: демон стартует, но probe падает
+с `permission denied`; `ls -l /dev/nst0` показывает `root storage`, а
+`usermod -aG tape` либо отказывает (группы нет), либо бесполезен.
+
+Диагноз:
+
+```bash
+ls -l /dev/st0 /dev/nst0     # root:storage → случай Arch
+getent group tape            # пусто → группы нет
+```
+
+Решение — привести устройство к конвенции проекта (группа `tape`
+совпадает с подсказками ошибок демона и юнитом):
+
+```bash
+getent group tape || sudo groupadd -r tape
+```
+
 `/etc/udev/rules.d/88-tape.rules`:
 
 ```
-KERNEL=="nst[0-9]*", GROUP="tape", MODE="0660"
+KERNEL=="st[0-9]*|nst[0-9]*", GROUP="tape", MODE="0660"
 ```
 
 и примените:
 
 ```bash
-udevadm control --reload && udevadm trigger
+sudo udevadm control --reload
+sudo udevadm trigger -w /dev/st0 /dev/nst0
 ```
+
+`-w` (ждать обработки события) важен при проверке: без него `trigger`
+асинхронен, и `ls -l` сразу после команды покажет ещё старую группу —
+выглядит как «правило не сработало», хотя оно применилось мгновениями
+позже.
+
+Альтернатива — не заводить `tape` и оставить арховскую `storage`
+(`SupplementaryGroups=storage` в юните). Работает, но подсказки демона
+(`usermod -aG tape ...`) перестают соответствовать реальности.
+
+Смена группы на устройстве подхватывается демоном рестартом
+(`systemctl restart lentovodec`): supplementary-группы процесса
+фиксируются при его старте.
 
 ---
 
@@ -210,3 +254,18 @@ LENTOVODEC_TAPE_DEVICE=/dev/nst0 go test -tags tape ./test/hardware/...
 
 Быстрая проверка в эксплуатации — `lentovodec tape readtest`:
 диагностическое чтение всей кассеты со сверкой хешей без записи на ФС.
+
+---
+
+## Особенности Arch Linux (грабли первой установки)
+
+1. **Группа `storage` вместо `tape` на `/dev/nst*`, группы `tape` нет** —
+   патч Arch над дефолтными правилами systemd; лечение — §2.
+2. **`nodejs` и `npm` — отдельные пакеты** (`sudo pacman -S nodejs npm`).
+   Без npm падает `make web-build` («npm: command not found»), а следом
+   `make build` — «pattern assets: no matching files found»: каталог
+   `internal/iface/web/assets/` в свежем клоне не существует, его создаёт
+   только Vite-сборка (`make web-build` обязателен до `make build`).
+3. **`mt` — пакет `mt-st`**: в базовой поставке утилиты нет
+   (`mt: command not found`).
+4. **`dmesg` читается только root**: `sudo dmesg | grep -i st`.

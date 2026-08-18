@@ -246,8 +246,9 @@ useradd --system --home-dir /var/lib/lentovodec --create-home \
 usermod -aG tape lentovodec
 ```
 
-Полное руководство (udev, каталоги данных, systemd-юнит с харднингом,
-проверка стенда на реальном стримере) — в
+Полное руководство (udev, включая особенность Arch Linux — группа
+`storage` вместо `tape` на `/dev/nst*`; каталоги данных, systemd-юнит с
+харднингом, проверка стенда на реальном стримере) — в
 [`docs/func/ru/os-setup.md`](docs/func/ru/os-setup.md).
 
 ---
