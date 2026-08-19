@@ -136,9 +136,11 @@ func (s *Scanner) scanEntry(
 	if err != nil {
 		return domain.FileMeta{}, false, false, err
 	}
+	// Идентичность inode регистрируется до проверки «не изменился»:
+	// неизменённый владелец пары остаётся якорем для второго участника.
+	setHardlink(&cur, info.LinkID(), links)
 	prev, existed := snapshot[p]
-	if existed && prev.Size == cur.Size && prev.ModTime == cur.ModTime &&
-		prev.Type == cur.Type && prev.Linkname == cur.Linkname {
+	if existed && unchanged(cur, prev) {
 		return domain.FileMeta{}, false, false, nil
 	}
 	if existed {
@@ -146,7 +148,6 @@ func (s *Scanner) scanEntry(
 	} else {
 		cur.State = domain.StateAdded
 	}
-	setHardlink(&cur, info.LinkID(), links)
 	if !cur.IsDir && !cur.IsSymlink() && !cur.IsHardlink() {
 		cur.Hash, err = s.hashFile(cur.Path)
 		if err != nil {
@@ -154,6 +155,16 @@ func (s *Scanner) scanEntry(
 		}
 	}
 	return cur, true, false, nil
+}
+
+// unchanged сравнивает запись с прошлым снимком: совпадение размера,
+// mtime, класса записи и цели ссылки означает отсутствие изменений.
+// Тип сравнивается нормализованно: пустое значение и 'reg' эквивалентны
+// (снимок из мигрированной БД хранит 'reg', свежий скан — пустой тип).
+func unchanged(cur, prev domain.FileMeta) bool {
+	return prev.Size == cur.Size && prev.ModTime == cur.ModTime &&
+		prev.Type.Normalized() == cur.Type.Normalized() &&
+		prev.Linkname == cur.Linkname
 }
 
 func (s *Scanner) entryMeta(path, normalized string, info port.Entry) (domain.FileMeta, error) {

@@ -77,6 +77,23 @@ func TestFileMetaOldTypeMeansRegular(t *testing.T) {
 	}
 }
 
+func TestFileTypeNormalized(t *testing.T) {
+	tests := []struct {
+		in   domain.FileType
+		want domain.FileType
+	}{
+		{"", domain.FileTypeRegular},
+		{domain.FileTypeRegular, domain.FileTypeRegular},
+		{domain.FileTypeSymlink, domain.FileTypeSymlink},
+		{domain.FileTypeHardlink, domain.FileTypeHardlink},
+	}
+	for _, tt := range tests {
+		if got := tt.in.Normalized(); got != tt.want {
+			t.Errorf("FileType(%q).Normalized() = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestFileMetaPredicates(t *testing.T) {
 	tests := []struct {
 		state      domain.FileState

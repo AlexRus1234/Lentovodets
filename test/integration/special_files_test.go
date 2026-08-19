@@ -67,4 +67,20 @@ func TestBackupRestore_SpecialFilesStructure(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(destRoot(selectiveDest, h.src), "dangling")); err != nil {
 		t.Fatalf("selective symlink missing: %v", err)
 	}
+
+	// Selective-восстановление hardlink-пары: восстановленный участник
+	// остаётся жёсткой ссылкой (владелец извлекается из той же сессии).
+	hardDest := h.dest + "-hardlink"
+	if _, err := h.restoreUCTo(hardDest).Selective(context.Background(), 1, []string{second}); err != nil {
+		t.Fatalf("selective hardlink restore: %v", err)
+	}
+	hd := destRoot(hardDest, h.src)
+	hFirst, err := os.Stat(filepath.Join(hd, "first.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hSecond, err := os.Stat(filepath.Join(hd, "second.txt"))
+	if err != nil || !os.SameFile(hFirst, hSecond) {
+		t.Fatalf("selective hardlink identity: first=%v second=%v err=%v", hFirst, hSecond, err)
+	}
 }

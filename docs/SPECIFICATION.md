@@ -209,6 +209,9 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 
 Сканер сохраняет симлинки и hardlink-пары. FIFO, sockets и device-файлы
 пропускаются с предупреждением и учитываются в `Stats.SkippedSpecials`.
+Неизменённой запись считается при совпадении размера, mtime,
+нормализованного типа (пустой и `'reg'` эквивалентны) и цели ссылки;
+владелец hardlink-пары якорит пару, даже если сам не изменился.
 
 См. диаграмму в [ARCHITECTURE §4.1](ARCHITECTURE.md#41-backupusecasebackupctx-jobname-opts).
 

@@ -34,7 +34,9 @@ func (t FileType) Valid() bool {
 	return t == "" || t == FileTypeRegular || t == FileTypeSymlink || t == FileTypeHardlink
 }
 
-func (t FileType) normalized() FileType {
+// Normalized возвращает каноническое значение типа: пустое значение
+// (старые индексы и строки БД до миграции v2) означает обычный файл.
+func (t FileType) Normalized() FileType {
 	if t == "" {
 		return FileTypeRegular
 	}
@@ -81,8 +83,8 @@ func (fm FileMeta) IsAdded() bool { return fm.State == StateAdded }
 // IsDeleted сообщает, что запись — tombstone на удалённый файл.
 func (fm FileMeta) IsDeleted() bool { return fm.State == StateDeleted }
 
-func (fm FileMeta) IsSymlink() bool  { return fm.Type.normalized() == FileTypeSymlink }
-func (fm FileMeta) IsHardlink() bool { return fm.Type.normalized() == FileTypeHardlink }
+func (fm FileMeta) IsSymlink() bool  { return fm.Type.Normalized() == FileTypeSymlink }
+func (fm FileMeta) IsHardlink() bool { return fm.Type.Normalized() == FileTypeHardlink }
 
 // Validate checks the additive special-file invariants. Empty Type is the
 // representation used by old indexes and means a regular file.

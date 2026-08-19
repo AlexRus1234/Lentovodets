@@ -431,6 +431,79 @@ func TestScan_SymlinkMtimeIsCompared(t *testing.T) {
 	}
 }
 
+func TestScan_SymlinkRetargetDetectedByLinkname(t *testing.T) {
+	// size и mtime цели совпадают со снимком — изменение детектирует
+	// только сравнение Linkname.
+	m := testutil.NewMapFS(nil)
+	m.AddSymlink("/etc/link", "bbbb")
+	snap := []domain.FileMeta{{Path: "/etc/link", Type: domain.FileTypeSymlink, Linkname: "aaaa",
+		Size: 4, State: domain.StateAdded}}
+	got, err := newScanner(m).Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"}}, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var link *domain.FileMeta
+	for i := range got {
+		if got[i].Path == "/etc/link" {
+			link = &got[i]
+		}
+	}
+	if link == nil || link.State != domain.StateModified || link.Linkname != "bbbb" {
+		t.Fatalf("symlink retarget: %+v", got)
+	}
+}
+
+func TestScan_MigratedSnapshotRegTypeIsUnchanged(t *testing.T) {
+	// Снимок из БД после миграции v2 хранит type='reg' у обычных файлов;
+	// свежий скан оставляет пустой тип — записи эквивалентны.
+	m := testutil.NewMapFS(map[string]string{"etc/hosts": "x"})
+	m.MapFS["etc/hosts"].ModTime = time.Unix(1000, 0)
+	snap := []domain.FileMeta{{Path: "/etc/hosts", Type: domain.FileTypeRegular,
+		Size: 1, ModTime: time.Unix(1000, 0).UnixNano(), Hash: "dead", State: domain.StateAdded}}
+	got, err := newScanner(m).Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeMirror, Paths: []string{"/etc"}}, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fm := range got {
+		if fm.Path == "/etc/hosts" {
+			t.Fatalf("неизменённый файл попал в сессию: %+v", fm)
+		}
+	}
+}
+
+func TestScan_UnchangedHardlinkOwnerAnchorsPair(t *testing.T) {
+	m := testutil.NewMapFS(map[string]string{"etc/first": "payload", "etc/second": "payload"})
+	m.SetLinkID("/etc/first", "dev:ino")
+	m.SetLinkID("/etc/second", "dev:ino")
+	m.MapFS["etc/first"].ModTime = time.Unix(1000, 0)
+	m.MapFS["etc/second"].ModTime = time.Unix(3000, 0)
+	snap := []domain.FileMeta{
+		{Path: "/etc/first", Size: 7, ModTime: time.Unix(1000, 0).UnixNano(), Hash: "x", State: domain.StateAdded},
+		{Path: "/etc/second", Type: domain.FileTypeHardlink, Linkname: "/etc/first",
+			Size: 7, ModTime: time.Unix(2000, 0).UnixNano(), State: domain.StateAdded},
+	}
+	// Владелец не менялся, второй участник изменил mtime: он всё равно
+	// должен быть lnk на /etc/first — якорь регистрируется даже для
+	// неизменённого владельца.
+	got, err := newScanner(m).Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"}}, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second *domain.FileMeta
+	for i := range got {
+		switch got[i].Path {
+		case "/etc/first":
+			t.Errorf("неизменённый владелец попал в сессию: %+v", got[i])
+		case "/etc/second":
+			second = &got[i]
+		}
+	}
+	if second == nil || !second.IsHardlink() || second.Linkname != "/etc/first" ||
+		second.State != domain.StateModified || second.Hash != "" {
+		t.Fatalf("изменённый участник пары = %+v", second)
+	}
+}
+
 func TestScan_SkipsSpecialEntriesAndCountsThem(t *testing.T) {
 	m := testutil.NewMapFS(map[string]string{"etc/regular": "x"})
 	m.MapFS["etc/fifo"] = &fstest.MapFile{Mode: fs.ModeNamedPipe | 0o644}
