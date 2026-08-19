@@ -67,11 +67,16 @@ func openTape(t *testing.T) port.Tape {
 }
 
 // TestTape_LabelWriteRewindRead — раскладка FORMAT §4: ярлык + двойной
-// EOF (EOD), затем перечитать с начала.
+// EOF (EOD), затем перечитать с начала. Запись идёт от BOT: запись в
+// текущей позиции усекает хвост — раскладка детерминирована независимо
+// от того, что было на кассете.
 func TestTape_LabelWriteRewindRead(t *testing.T) {
 	tp := openTape(t)
 	ctx := context.Background()
 
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind (подготовка): %v", err)
+	}
 	label := bytes.Repeat([]byte{0xAB}, 512)
 	label = append(label, make([]byte, domain.BlockSize-512)...)
 	if err := tp.WriteBlock(ctx, label); err != nil {
@@ -102,15 +107,27 @@ func TestTape_LabelWriteRewindRead(t *testing.T) {
 	}
 }
 
-// TestTape_SessionNavigation — две «сессии» (блок+метка ×2), навигация
-// MTFSF/MTBSFM/MTEOM по правилам FORMAT §9.
+// TestTape_SessionNavigation — три «сессии» (блок+метка ×3), навигация
+// MTFSF/MTBSFM/MTEOM по правилам FORMAT §9. Запись от BOT усекает
+// хвост: раскладка [s1][FM1][s2][FM2][s3][FM3], позиция после записи —
+// EOD (за FM3).
+//
+// MTBSFM(n) из EOD — позиция после n-й метки позади, начало следующего
+// за ней файла (канон ROADMAP Этап 4; та же семантика у FakeTape и
+// filetape): BSFM(1) — no-op (мы уже за FM3), BSFM(2) — начало s3,
+// BSFM(3) — начало s2. К s1 BSFM не приводит принципиально: перед ним
+// меток нет — только Rewind.
 func TestTape_SessionNavigation(t *testing.T) {
 	tp := openTape(t)
 	ctx := context.Background()
 
 	s1 := bytes.Repeat([]byte{0x11}, domain.BlockSize)
 	s2 := bytes.Repeat([]byte{0x22}, domain.BlockSize)
-	for i, block := range [][]byte{s1, s2} {
+	s3 := bytes.Repeat([]byte{0x33}, domain.BlockSize)
+	if err := tp.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind (подготовка): %v", err)
+	}
+	for i, block := range [][]byte{s1, s2, s3} {
 		if err := tp.WriteBlock(ctx, block); err != nil {
 			t.Fatalf("WriteBlock(%d): %v", i+1, err)
 		}
@@ -119,37 +136,59 @@ func TestTape_SessionNavigation(t *testing.T) {
 		}
 	}
 
-	if err := tp.Rewind(ctx); err != nil {
-		t.Fatalf("Rewind: %v", err)
+	toEOD := func() {
+		t.Helper()
+		if err := tp.Rewind(ctx); err != nil {
+			t.Fatalf("Rewind: %v", err)
+		}
+		if err := tp.ForwardFilemarks(ctx, 3); err != nil {
+			t.Fatalf("ForwardFilemarks(3) в EOD: %v", err)
+		}
 	}
-	// MTFSF(1) — начало сессии 2.
-	if err := tp.ForwardFilemarks(ctx, 1); err != nil {
-		t.Fatalf("ForwardFilemarks(1): %v", err)
+
+	// BSFM(1) из EOD — no-op: чтение даёт EOF (за FM3 данных нет).
+	toEOD()
+	if err := tp.BackwardFilemarks(ctx, 1); err != nil {
+		t.Fatalf("BackwardFilemarks(1) из EOD: %v", err)
+	}
+	if _, err := tp.ReadBlock(ctx); !errors.Is(err, io.EOF) {
+		t.Fatalf("чтение после BSFM(1): %v, хочу io.EOF (no-op)", err)
+	}
+
+	// BSFM(2) из EOD — начало последнего файла s3.
+	toEOD()
+	if err := tp.BackwardFilemarks(ctx, 2); err != nil {
+		t.Fatalf("BackwardFilemarks(2): %v", err)
 	}
 	got, err := tp.ReadBlock(ctx)
 	if err != nil {
 		t.Fatalf("ReadBlock: %v", err)
 	}
-	if !bytes.Equal(got, s2) {
-		t.Fatal("MTFSF(1) привёл не ко второй сессии")
+	if !bytes.Equal(got, s3) {
+		t.Fatal("MTBSFM(2) привёл не к последней сессии s3")
 	}
-	// MTBSFM(2) от позиции за меткой сессии 2 — назад к началу сессии 1.
-	if err := tp.BackwardFilemarks(ctx, 2); err != nil {
-		t.Fatalf("BackwardFilemarks(2): %v", err)
+
+	// BSFM(3) из EOD — начало s2.
+	toEOD()
+	if err := tp.BackwardFilemarks(ctx, 3); err != nil {
+		t.Fatalf("BackwardFilemarks(3): %v", err)
 	}
 	got, err = tp.ReadBlock(ctx)
 	if err != nil {
 		t.Fatalf("ReadBlock: %v", err)
 	}
-	if !bytes.Equal(got, s1) {
-		t.Fatal("MTBSFM(2) привёл не к первой сессии")
+	if !bytes.Equal(got, s2) {
+		t.Fatal("MTBSFM(3) привёл не к сессии s2")
 	}
-	// MTEOM: позиция дозаписи; новый блок и метка должны читаться в хвосте.
+
+	// MTEOM из середины: позиция дозаписи; новый блок и метка должны
+	// читаться как четвёртая сессия ([s1][FM1][s2][FM2][s3][FM3][s4][FM4],
+	// чтение s4 — FSF(3): за FM3, в начале s4).
 	if err := tp.EndOfData(ctx); err != nil {
 		t.Fatalf("EndOfData: %v", err)
 	}
-	s3 := bytes.Repeat([]byte{0x33}, domain.BlockSize)
-	if err := tp.WriteBlock(ctx, s3); err != nil {
+	s4 := bytes.Repeat([]byte{0x44}, domain.BlockSize)
+	if err := tp.WriteBlock(ctx, s4); err != nil {
 		t.Fatalf("WriteBlock(append): %v", err)
 	}
 	if err := tp.WriteEOF(ctx); err != nil {
@@ -165,8 +204,8 @@ func TestTape_SessionNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadBlock(дозапись): %v", err)
 	}
-	if !bytes.Equal(got, s3) {
-		t.Fatal("дозапись в EOD не читается третьей сессией")
+	if !bytes.Equal(got, s4) {
+		t.Fatal("дозапись в EOD не читается четвёртой сессией")
 	}
 }
 
