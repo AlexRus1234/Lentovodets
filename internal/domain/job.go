@@ -52,10 +52,16 @@ type Job struct {
 	Mode        JobMode  // append или mirror
 	Paths       []string // корни бекапа (файлы или каталоги)
 	Exclude     []string // glob-шаблоны исключений; семантика — MatchExclude
+
+	// SpanDepth — глубина группировки частей spanning-сессии по
+	// каталогам (ключ span_depth): 0 — резка по файлам (дефолт),
+	// N ≥ 1 — группы = каталоги N-го уровня под корнем задания.
+	SpanDepth int32 `mapstructure:"span_depth"`
 }
 
 // Validate проверяет целостность задания: непустое имя, допустимый
-// режим, непустой список путей без пустых элементов.
+// режим, непустой список путей без пустых элементов, неотрицательная
+// глубина группировки span_depth.
 func (j Job) Validate() error {
 	if j.Name == "" {
 		return errors.New("имя задания не может быть пустым")
@@ -69,6 +75,10 @@ func (j Job) Validate() error {
 	}
 	if hasEmptyPath(j.Paths) {
 		return fmt.Errorf("задание %q: один из путей пуст", j.Name)
+	}
+	if j.SpanDepth < 0 {
+		return fmt.Errorf("задание %q: span_depth = %d: глубина не может быть отрицательной",
+			j.Name, j.SpanDepth)
 	}
 	return nil
 }

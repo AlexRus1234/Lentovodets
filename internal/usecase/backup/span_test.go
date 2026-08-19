@@ -379,3 +379,150 @@ func TestBackup_SinglePartSkipsChanger(t *testing.T) {
 		t.Errorf("changer тронут: запросов %d, закрытий %d; want 0/0", len(ch.Requests), ch.Closed)
 	}
 }
+
+// spanDepthFiles — дерево для группировки: под /data каталоги a (90
+// байт) и b (60); при бюджете 100 файловая резка рвёт группу b, а
+// depth=1 переносит её целиком в следующую часть.
+func spanDepthFiles() map[string]string {
+	return map[string]string{
+		"data/a/f1": strings.Repeat("1", 60),
+		"data/a/f2": strings.Repeat("2", 30),
+		"data/b/f1": strings.Repeat("3", 40),
+		"data/b/f2": strings.Repeat("4", 20),
+	}
+}
+
+// spanDepthHarness — harness с заданием /data и заданной глубиной.
+func spanDepthHarness(t *testing.T, depth int32) *harness {
+	t.Helper()
+	h := newHarness(t, spanDepthFiles())
+	h.cfg = &fakeConfig{
+		jobs: []domain.Job{{
+			Name:      "daily",
+			Mode:      domain.ModeAppend,
+			Paths:     []string{"/data"},
+			SpanDepth: depth,
+		}},
+		capacity: 100,
+	}
+	farm := &tapeFarm{codec: h.codec, cat: h.cat}
+	h.changer = &testutil.FuncChanger{Request: farm.request}
+	h.rebuild()
+	return h
+}
+
+// partFilePaths — пути файлов конкретной части цепочки запуска.
+func partFilePaths(t *testing.T, h *harness, jobRunID string) [][]string {
+	t.Helper()
+	chain, err := h.cat.GetSessionChain(context.Background(), jobRunID)
+	if err != nil {
+		t.Fatalf("GetSessionChain: %v", err)
+	}
+	out := make([][]string, 0, len(chain))
+	for _, sess := range chain {
+		files, err := h.cat.GetFilesBySession(context.Background(), sess.ID)
+		if err != nil {
+			t.Fatalf("GetFilesBySession(%d): %v", sess.ID, err)
+		}
+		paths := make([]string, len(files))
+		for i, fm := range files {
+			paths[i] = fm.Path
+		}
+		out = append(out, paths)
+	}
+	return out
+}
+
+// TestBackup_SpanDepthGroupsByDirectory — планировщик получает
+// SpanDepth из задания (фейк-конфиг): depth=0 рвёт группу b по файлам
+// (каталог /data/b остаётся в части 1), depth=1 откатывает группу
+// b целиком в начало части 2 вместе с каталогом-главой.
+func TestBackup_SpanDepthGroupsByDirectory(t *testing.T) {
+	t.Run("depth 0 file cut", func(t *testing.T) {
+		h := spanDepthHarness(t, 0)
+		res, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+		if err != nil {
+			t.Fatalf("Backup: %v", err)
+		}
+		if res.Parts != 2 {
+			t.Fatalf("частей %d; want 2", res.Parts)
+		}
+		got := partFilePaths(t, h, res.Session.JobRunID)
+		want := [][]string{
+			{"/data", "/data/a", "/data/a/f1", "/data/a/f2", "/data/b"},
+			{"/data/b/f1", "/data/b/f2"},
+		}
+		if !pathsEqual(got, want) {
+			t.Errorf("части = %v; want %v", got, want)
+		}
+	})
+	t.Run("depth 1 group rollback", func(t *testing.T) {
+		h := spanDepthHarness(t, 1)
+		res, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+		if err != nil {
+			t.Fatalf("Backup: %v", err)
+		}
+		if res.Parts != 2 {
+			t.Fatalf("частей %d; want 2", res.Parts)
+		}
+		got := partFilePaths(t, h, res.Session.JobRunID)
+		want := [][]string{
+			{"/data", "/data/a", "/data/a/f1", "/data/a/f2"},
+			{"/data/b", "/data/b/f1", "/data/b/f2"},
+		}
+		if !pathsEqual(got, want) {
+			t.Errorf("части = %v; want %v (группа b целиком в части 2)", got, want)
+		}
+	})
+}
+
+// TestBackup_SpanDepthFileTooLargeInsideFallback — негабаритный файл
+// внутри группы дороже бюджета: FileTooLargeError до записи, лента
+// и каталог не тронуты.
+func TestBackup_SpanDepthFileTooLargeInsideFallback(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"data/big":   strings.Repeat("x", 150),
+		"data/small": strings.Repeat("y", 30),
+	})
+	h.cfg = &fakeConfig{
+		jobs: []domain.Job{{
+			Name: "daily", Mode: domain.ModeAppend,
+			Paths: []string{"/data"}, SpanDepth: 1,
+		}},
+		capacity: 100,
+	}
+	h.rebuild()
+	_, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+	var tooBig *domain.FileTooLargeError
+	if !errors.As(err, &tooBig) {
+		t.Fatalf("Backup: %v; want FileTooLargeError", err)
+	}
+	if tooBig.Path != "/data/big" || tooBig.Capacity != 100 {
+		t.Errorf("FileTooLargeError = %+v; want /data/big с бюджетом 100", tooBig)
+	}
+	if len(h.codec.WroteHeaders) != 0 || h.fakeTape.MarkCount() != 2 {
+		t.Errorf("лента тронута: записей %d, меток %d; want 0/2", len(h.codec.WroteHeaders), h.fakeTape.MarkCount())
+	}
+	sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+	if len(sessions) != 0 {
+		t.Errorf("сессия создана: %+v", sessions)
+	}
+}
+
+// pathsEqual — сравнение списков путей частей.
+func pathsEqual(got, want [][]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if len(got[i]) != len(want[i]) {
+			return false
+		}
+		for j := range got[i] {
+			if got[i][j] != want[i][j] {
+				return false
+			}
+		}
+	}
+	return true
+}

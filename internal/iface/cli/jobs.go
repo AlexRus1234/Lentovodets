@@ -70,9 +70,10 @@ func newJobsListCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	}
 }
 
-// newJobsAddCmd — `lentovodec jobs add <name> --paths --mode --desc --exclude`.
+// newJobsAddCmd — `lentovodec jobs add <name> --paths --mode --desc --exclude --span-depth`.
 func newJobsAddCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	var pathsRaw, mode, desc, excludeRaw string
+	var spanDepth int32
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Добавить задание в TOML",
@@ -88,6 +89,7 @@ func newJobsAddCmd(deps Deps, flags *globalFlags) *cobra.Command {
 				Mode:        domain.JobMode(mode),
 				Paths:       splitCSV(pathsRaw),
 				Exclude:     splitCSV(excludeRaw),
+				SpanDepth:   spanDepth,
 			}
 			if err := rt.cfg.AddJob(job); err != nil {
 				return err
@@ -100,6 +102,8 @@ func newJobsAddCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "append", "режим: append | mirror")
 	cmd.Flags().StringVar(&desc, "desc", "", "описание")
 	cmd.Flags().StringVar(&excludeRaw, "exclude", "", "glob-шаблоны исключений через запятую")
+	cmd.Flags().Int32Var(&spanDepth, "span-depth", 0,
+		"глубина группировки частей spanning по каталогам (0 — резка по файлам)")
 	return cmd
 }
 

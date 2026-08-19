@@ -70,7 +70,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
   размеру, mtime и xxhash64
 - Многотомные бекапи с продолжением по кассетам (spanning): сессия режется
   по границам файлов, каждая кассета читается голым GNU tar (рецепт DR —
-  `docs/func/ru/tape-format.md`)
+  `docs/func/ru/tape-format.md`); per-job `span_depth` режет по границам
+  каталогов — поддерево целиком на одной кассете
 - Режимы заданий `append` (версионная дозапись) и `mirror` (tombstone'ы
   удалений — восстановление реконструирует зеркало каталога на момент
   любой сессии)
@@ -221,6 +222,9 @@ Description = "Бекап медиатеки"
 Mode = "append"              # append | mirror
 Paths = ["/tank/data/media"]
 Exclude = ["**/.DS_Store", "**/*.partial"]
+span_depth = 1               # резка spanning-частей по каталогам 1-го
+                             # уровня (локальность поддерева на одной
+                             # кассете); 0/отсутствие — по файлам
 ```
 
 Слои применения: defaults → TOML → env (`LENTOVODEC_DEVICE`,

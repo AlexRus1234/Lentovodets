@@ -99,6 +99,7 @@ func mediaJob() domain.Job {
 // (viper при записи нормализует отсутствующий список в []).
 func jobsEqual(a, b domain.Job) bool {
 	return a.Name == b.Name && a.Description == b.Description && a.Mode == b.Mode &&
+		a.SpanDepth == b.SpanDepth &&
 		stringsEqual(a.Paths, b.Paths) && stringsEqual(a.Exclude, b.Exclude)
 }
 
@@ -368,6 +369,116 @@ func TestAddJob_InvalidJobRejected(t *testing.T) {
 	}
 	if len(jobs) != 2 {
 		t.Errorf("jobs len = %d, want 2 (невалидное не добавлено)", len(jobs))
+	}
+}
+
+// TestJobs_SpanDepthPerJob — ключ span_depth читается per-job;
+// отсутствие ключа — дефолт 0 (резка по файлам).
+func TestJobs_SpanDepthPerJob(t *testing.T) {
+	cfg, _ := newConfig(t, `
+[[jobs]]
+name = "media"
+mode = "append"
+paths = ["/tank/data/media"]
+span_depth = 2
+
+[[jobs]]
+name = "system"
+mode = "mirror"
+paths = ["/etc"]
+`)
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("jobs len = %d, want 2", len(jobs))
+	}
+	if jobs[0].SpanDepth != 2 {
+		t.Errorf("jobs[0].SpanDepth = %d, want 2", jobs[0].SpanDepth)
+	}
+	if jobs[1].SpanDepth != 0 {
+		t.Errorf("jobs[1].SpanDepth = %d, want 0 (дефолт без ключа)", jobs[1].SpanDepth)
+	}
+}
+
+// TestAddJob_SpanDepthRoundTrip — span_depth переживает запись в TOML
+// и перечитывание; нулевая глубина не пишется (чистый конфиг).
+func TestAddJob_SpanDepthRoundTrip(t *testing.T) {
+	cfg, path := newConfig(t, "")
+	grouped := mediaJob()
+	grouped.SpanDepth = 1
+	if err := cfg.AddJob(grouped); err != nil {
+		t.Fatalf("AddJob(span_depth=1): %v", err)
+	}
+	if err := cfg.AddJob(domain.Job{Name: "plain", Mode: domain.ModeAppend, Paths: []string{"/etc"}}); err != nil {
+		t.Fatalf("AddJob(span_depth=0): %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "span_depth") {
+		t.Errorf("span_depth не записан в TOML:\n%s", raw)
+	}
+
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 2 || !jobsEqual(jobs[0], grouped) {
+		t.Fatalf("jobs[0] = %+v, want round-trip %+v", jobs[0], grouped)
+	}
+	if jobs[1].SpanDepth != 0 {
+		t.Errorf("jobs[1].SpanDepth = %d, want 0 (не писалась)", jobs[1].SpanDepth)
+	}
+}
+
+// TestAddJob_NegativeSpanDepthRejected — отрицательная глубина —
+// ошибка валидации задания, файл не меняется.
+func TestAddJob_NegativeSpanDepthRejected(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	bad := mediaJob()
+	bad.SpanDepth = -3
+	if err := cfg.AddJob(bad); err == nil {
+		t.Fatal("отрицательная span_depth принята, want ошибка Validate")
+	}
+	jobs, err := cfg.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 || jobs[0].SpanDepth != 0 {
+		t.Fatalf("jobs = %+v, want 2 исходных без span_depth", jobs)
+	}
+}
+
+// TestRemoveJob_PreservesSpanDepth — перезапись [[jobs]] при удалении
+// сохраняет span_depth оставшихся заданий.
+func TestRemoveJob_PreservesSpanDepth(t *testing.T) {
+	cfg, path := newConfig(t, `
+[[jobs]]
+name = "media"
+mode = "append"
+paths = ["/tank/data/media"]
+span_depth = 1
+
+[[jobs]]
+name = "system"
+mode = "mirror"
+paths = ["/etc"]
+`)
+	if err := cfg.RemoveJob("system"); err != nil {
+		t.Fatalf("RemoveJob: %v", err)
+	}
+	reopened := reopen(t, path)
+	jobs, err := reopened.Jobs()
+	if err != nil {
+		t.Fatalf("Jobs(reopen): %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].SpanDepth != 1 {
+		t.Fatalf("jobs = %+v, want media с span_depth=1", jobs)
 	}
 }
 

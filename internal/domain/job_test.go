@@ -63,6 +63,9 @@ func TestJobValidate(t *testing.T) {
 		{"пустой список путей", func(j *domain.Job) { j.Paths = []string{} }, true},
 		{"пробельный путь", func(j *domain.Job) { j.Paths = []string{"/ok", "   "} }, true},
 		{"append валиден", func(j *domain.Job) { j.Mode = domain.ModeAppend }, false},
+		{"span_depth ноль валиден", func(j *domain.Job) { j.SpanDepth = 0 }, false},
+		{"span_depth положительная валидна", func(j *domain.Job) { j.SpanDepth = 3 }, false},
+		{"отрицательная span_depth", func(j *domain.Job) { j.SpanDepth = -1 }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

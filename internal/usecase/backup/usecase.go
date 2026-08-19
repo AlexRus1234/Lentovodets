@@ -140,7 +140,7 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 	}
 	stats := statsOf(files)
 
-	plan, err := uc.planSpanning(ctx, st.job.Name, opts, st.lastNum, st.sessions, files)
+	plan, err := uc.planSpanning(ctx, st.job, opts, st.lastNum, st.sessions, files)
 	if err != nil {
 		return Result{}, err
 	}
@@ -222,19 +222,20 @@ type spanPlan struct {
 	newTape  bool              // остаток < min_tail: часть 1 на новую кассету
 }
 
-// planSpanning режет сессию на части после скана (план «тома» §2.2).
-// Бюджет части 1: FULL/первая сессия — capacity целиком; дозапись —
-// остаток capacity − Σ байт файлов сессий кассеты из каталога
-// (tombstone'ы не считаются — на ленту не пишутся; индексный overhead
-// не учитывается — оценка). Остаток меньше min_tail — бюджет capacity
+// planSpanning режет сессию на части после скана (план «тома» §2.2,
+// сессия 9 — группировка по каталогам job.SpanDepth). Бюджет части 1:
+// FULL/первая сессия — capacity целиком; дозапись — остаток
+// capacity − Σ байт файлов сессий кассеты из каталога (tombstone'ы
+// не считаются — на ленту не пишутся; индексный overhead не
+// учитывается — оценка). Остаток меньше min_tail — бюджет capacity
 // и признак newTape: вся сессия начинается на новой кассете через
 // changer (writeParts). capacity = 0 — spanning выключен: одна
-// часть без проверки размеров (переполнение ловит ENOSPC-путь записи).
-// Ошибка планировщика (FileTooLargeError и сбой конфига/каталога)
-// возвращается до каких-либо записей.
+// часть без проверки размеров (переполнение ловит ENOSPC-путь
+// записи). Ошибка планировщика (FileTooLargeError и сбой конфига/
+// каталога) возвращается до каких-либо записей.
 func (uc *UseCase) planSpanning(
 	ctx context.Context,
-	jobName string,
+	job domain.Job,
 	opts Options,
 	lastNum int32,
 	sessions []domain.Session,
@@ -272,15 +273,16 @@ func (uc *UseCase) planSpanning(
 			}
 		}
 	}
-	plan.parts, err = domain.PlanSpan(files, plan.budget)
+	plan.parts, err = domain.PlanSpan(files, plan.budget, job.Paths, job.SpanDepth)
 	if err != nil {
 		return spanPlan{}, err
 	}
 	uc.log.Info("backup planned",
-		slog.String("job", jobName),
+		slog.String("job", job.Name),
 		slog.Int("planned_parts", len(plan.parts)),
 		slog.Int64("budget_bytes", plan.budget),
-		slog.Bool("new_tape", plan.newTape))
+		slog.Bool("new_tape", plan.newTape),
+		slog.Int("span_depth", int(job.SpanDepth)))
 	return plan, nil
 }
 

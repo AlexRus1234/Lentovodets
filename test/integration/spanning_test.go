@@ -575,6 +575,80 @@ func TestSpanning_BareTarDRContract(t *testing.T) {
 	}
 }
 
+// TestSpanning_SpanDepthDirectoryGroups — span_depth=1: два поддерева
+// режутся по границе каталогов — группа docs (не влезающая в остаток
+// после группы movies) откатывается целиком в часть 2 вместе с
+// каталогом-главой; файлы частей принадлежат группам своих поддеревьев.
+func TestSpanning_SpanDepthDirectoryGroups(t *testing.T) {
+	h := newHarness(t)
+	h.addJob(domain.Job{
+		Name: "media", Mode: domain.ModeAppend,
+		Paths: []string{h.src}, SpanDepth: 1,
+	})
+	h.cfg.CapacityBytes = 1_000_000 // movies 750k + docs 550k = 2 части
+	h.cfg.MinTailBytes = 1000
+	ctx := context.Background()
+
+	if _, err := h.formatUC().Format(ctx, "LTO-001", false); err != nil {
+		t.Fatalf("format: %v", err)
+	}
+	writeFile(t, h.src, "movies/m1.bin", bytes.Repeat([]byte{0x11}, 400_000))
+	writeFile(t, h.src, "movies/m2.bin", bytes.Repeat([]byte{0x22}, 350_000))
+	writeFile(t, h.src, "docs/d1.bin", bytes.Repeat([]byte{0x33}, 300_000))
+	writeFile(t, h.src, "docs/d2.bin", bytes.Repeat([]byte{0x44}, 250_000))
+
+	farm := h.spanFarmOf()
+	res, err := h.backupSpanUC(farm.newChanger()).Backup(ctx, "media", backup.Options{})
+	if err != nil {
+		t.Fatalf("backup (span_depth=1): %v", err)
+	}
+	if res.Parts != 2 || res.PlannedParts != 2 {
+		t.Fatalf("итог: parts=%d/%d; хочу 2/2", res.Parts, res.PlannedParts)
+	}
+
+	chain, err := h.cat.GetSessionChain(ctx, res.Session.JobRunID)
+	if err != nil {
+		t.Fatalf("GetSessionChain: %v", err)
+	}
+	if len(chain) != 2 {
+		t.Fatalf("цепочка: %d частей; хочу 2", len(chain))
+	}
+	prefix := filepath.ToSlash(filepath.Clean(h.src))
+	partFiles := make([][]string, 2)
+	for i, sess := range chain {
+		files, err := h.cat.GetFilesBySession(ctx, sess.ID)
+		if err != nil {
+			t.Fatalf("файлы части %d: %v", i+1, err)
+		}
+		for _, fm := range files {
+			partFiles[i] = append(partFiles[i], strings.TrimPrefix(fm.Path, prefix+"/"))
+		}
+	}
+	// обход лексический: docs идут первыми и заполняют часть 1
+	// (src + группа docs, 550k), группа movies (750k) не влезает в
+	// остаток 450k и откатывается целиком в часть 2 с каталогом-главой
+	if len(partFiles[0]) != 4 || partFiles[0][1] != "docs" ||
+		partFiles[0][2] != "docs/d1.bin" || partFiles[0][3] != "docs/d2.bin" {
+		t.Errorf("часть 1 = %v; хочу корень + группу docs целиком", partFiles[0])
+	}
+	if len(partFiles[1]) != 3 || partFiles[1][0] != "movies" ||
+		partFiles[1][1] != "movies/m1.bin" || partFiles[1][2] != "movies/m2.bin" {
+		t.Errorf("часть 2 = %v; хочу группу movies целиком с каталогом-главой", partFiles[1])
+	}
+
+	// restore full по цепочке — дерево целиком, локальность не потеряла
+	h.remountTape1()
+	wantFiles, wantDirs := treeOf(t, h.src)
+	st, err := h.restoreChainUC(h.dest, farm.serveChanger(), h.cat).Full(ctx)
+	if err != nil {
+		t.Fatalf("restore full: %v", err)
+	}
+	if st.Files != len(wantFiles) {
+		t.Fatalf("restore stats: %+v; хочу files=%d", st, len(wantFiles))
+	}
+	assertTreeEqual(t, destRoot(h.dest, h.src), wantFiles, wantDirs)
+}
+
 // keysOf возвращает отсортированный список ключей карты (для сообщений
 // об ошибке).
 func keysOf(m map[string][]byte) []string {

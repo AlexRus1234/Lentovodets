@@ -174,11 +174,19 @@ $ lentovodec restore --dest /restore
 | Команда | Описание |
 |---|---|
 | `lentovodec jobs list` | Показать задания из TOML |
-| `lentovodec jobs add <name> --paths P1,P2 [--mode M] [--desc D] [--exclude E1,E2]` | Добавить задание в TOML |
+| `lentovodec jobs add <name> --paths P1,P2 [--mode M] [--desc D] [--exclude E1,E2] [--span-depth N]` | Добавить задание в TOML |
 | `lentovodec jobs remove <name>` | Удалить задание |
 
 `--mode`: `append` (по умолчанию) или `mirror`; семантика режимов и
 exclude-шаблонов — [features.md](features.md).
+
+`--span-depth N` — глубина группировки spanning-частей по каталогам
+(0 — по умолчанию, резка по файлам; ключ не пишется в TOML):
+
+```bash
+# «movies на LTO-001»: поддеревья 1-го уровня не рвутся между кассетами
+lentovodec jobs add media --paths /tank/data/media --span-depth 1
+```
 
 ### Каталог (daemon)
 

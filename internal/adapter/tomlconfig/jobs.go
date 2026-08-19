@@ -88,12 +88,17 @@ func jobMaps(jobs []domain.Job) []map[string]any {
 }
 
 // jobToMap — доменное задание как map для [[jobs]] в TOML.
+// span_depth = 0 не пишется (дефолт; существующие конфиги не меняются).
 func jobToMap(j domain.Job) map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"name":        j.Name,
 		"description": j.Description,
 		"mode":        string(j.Mode),
 		"paths":       j.Paths,
 		"exclude":     j.Exclude,
 	}
+	if j.SpanDepth != 0 {
+		m["span_depth"] = j.SpanDepth
+	}
+	return m
 }
