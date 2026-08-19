@@ -34,6 +34,7 @@ import {
 import { setTask } from '../task'
 import { useI18n } from '../i18n'
 import { fmtBytes, fmtNanos } from '../format'
+import FileBrowser from './FileBrowser.vue'
 
 const { t } = useI18n()
 
@@ -53,6 +54,7 @@ const dialogOpen = ref(false)
 const restoreMode = ref<'safe' | 'original'>('safe')
 const restoreDest = ref('')
 const restoreBusy = ref(false)
+const browserOpen = ref(false)
 
 // norm — единый вид пути для навигации: слэши, без хвостового '/'.
 function norm(p: string): string {
@@ -413,7 +415,10 @@ const sessionLabel = (s: Session): string =>
         </label>
         <label v-if="restoreMode === 'safe'" class="indent">
           <span>{{ t('files.restore.dest') }}</span>
-          <input v-model="restoreDest" class="mono" placeholder="/safe/restore" required />
+          <div class="row">
+            <input v-model="restoreDest" class="mono" placeholder="/safe/restore" required />
+            <button type="button" @click="browserOpen = true">{{ t('files.browse') }}</button>
+          </div>
         </label>
         <label class="check">
           <input v-model="restoreMode" value="original" type="radio" />
@@ -428,6 +433,7 @@ const sessionLabel = (s: Session): string =>
         </div>
       </form>
     </div>
+    <FileBrowser v-if="browserOpen" @select="(paths) => { restoreDest = paths[0] ?? ''; browserOpen = false }" @close="browserOpen = false" />
   </div>
 </template>
 

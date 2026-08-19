@@ -77,6 +77,7 @@ const ru: Record<string, string> = {
   'jobs.mode.append': 'append — новые и изменённые',
   'jobs.mode.mirror': 'mirror — зеркало с tombstone',
   'jobs.paths': 'Корневые пути (по одному в строке)',
+  'jobs.browse': 'Обзор',
   'jobs.exclude': 'Исключения, glob (по одному в строке)',
   'jobs.run': 'Запустить',
   'jobs.runFull': 'Полный',
@@ -132,8 +133,17 @@ const ru: Record<string, string> = {
   'files.restore.original.confirm':
     'Файлы будут перезаписаны по оригинальным путям. Продолжить?',
   'files.restore.dest': 'Папка назначения',
+  'files.browse': 'Обзор',
   'files.restore.start': 'Восстановить',
   'files.restore.nothing': 'Ничего не выбрано',
+
+  'browser.title': 'Выбор пути',
+  'browser.up': 'Вверх',
+  'browser.hidden': 'Скрытые',
+  'browser.search': 'Фильтр',
+  'browser.empty': 'Каталог пуст',
+  'browser.select': 'Выбрать',
+  'browser.selected': 'Выбрано: {n}',
 }
 
 const en: Record<string, string> = {
@@ -182,6 +192,7 @@ const en: Record<string, string> = {
   'jobs.mode.append': 'append — new and modified',
   'jobs.mode.mirror': 'mirror — mirror with tombstones',
   'jobs.paths': 'Root paths (one per line)',
+  'jobs.browse': 'Browse',
   'jobs.exclude': 'Excludes, glob (one per line)',
   'jobs.run': 'Run',
   'jobs.runFull': 'Full',
@@ -236,8 +247,17 @@ const en: Record<string, string> = {
   'files.restore.original': 'To original paths',
   'files.restore.original.confirm': 'Files will be overwritten at their original paths. Continue?',
   'files.restore.dest': 'Destination folder',
+  'files.browse': 'Browse',
   'files.restore.start': 'Restore',
   'files.restore.nothing': 'Nothing selected',
+
+  'browser.title': 'Choose path',
+  'browser.up': 'Up',
+  'browser.hidden': 'Hidden',
+  'browser.search': 'Filter',
+  'browser.empty': 'Directory is empty',
+  'browser.select': 'Select',
+  'browser.selected': 'Selected: {n}',
 }
 
 const dict: Record<Lang, Record<string, string>> = { ru, en }

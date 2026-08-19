@@ -158,3 +158,33 @@ func TestMapFS_Walk(t *testing.T) {
 		t.Error("Walk отсутствующего корня: want error")
 	}
 }
+
+func TestMapFS_ReadDir(t *testing.T) {
+	fs := testutil.NewMapFS(map[string]string{
+		"/root/z.txt":     "z",
+		"/root/sub/a.txt": "a",
+		"/root/aa.txt":    "aa",
+		"/root/.hidden":   "h",
+	})
+	entries, err := fs.ReadDir("/root")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	got := []string{}
+	for _, entry := range entries {
+		got = append(got, entry.Name)
+	}
+	want := []string{"sub", ".hidden", "aa.txt", "z.txt"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("entries = %v, want %v", got, want)
+	}
+	if !entries[0].IsDir || entries[1].IsDir || entries[1].Size != 1 {
+		t.Errorf("details = %+v", entries)
+	}
+	if _, err := fs.ReadDir("/root/z.txt"); err == nil {
+		t.Error("ReadDir(file): want error")
+	}
+	if entries, err := testutil.NewMapFS(nil).ReadDir("/"); err != nil || len(entries) != 0 {
+		t.Errorf("empty root = %+v, %v", entries, err)
+	}
+}

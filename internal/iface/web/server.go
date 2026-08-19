@@ -163,6 +163,7 @@ func (s *Server) buildRouter() chi.Router {
 			r.Get("/jobs", s.handleJobsList)
 			r.Post("/jobs", s.handleJobAdd)
 			r.Delete("/jobs/{name}", s.handleJobRemove)
+			r.Get("/fs/list", s.handleFSList)
 			r.Post("/backup/start", s.handleBackupStart)
 			r.Post("/restore/start", s.handleRestoreStart)
 			r.Get("/tasks/active", s.handleTasksActive)

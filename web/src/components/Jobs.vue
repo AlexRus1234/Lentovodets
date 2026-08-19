@@ -24,6 +24,7 @@ import { onMounted, ref } from 'vue'
 import { listJobs, addJob, removeJob, startBackup, type Job, ApiError } from '../api'
 import { setTask } from '../task'
 import { useI18n } from '../i18n'
+import FileBrowser from './FileBrowser.vue'
 
 const { t } = useI18n()
 
@@ -35,6 +36,7 @@ const busy = ref(false)
 // Форма: null — закрыта, '' — создание, имя — редактирование.
 const editing = ref<string | null>(null)
 const form = ref<Job>(emptyJob())
+const browserOpen = ref(false)
 
 function emptyJob(): Job {
   return { name: '', description: '', mode: 'append', paths: [], exclude: [] }
@@ -63,6 +65,11 @@ function openEdit(job: Job): void {
     exclude: [...job.exclude],
   }
   editing.value = job.name
+}
+
+function addPaths(paths: string[]): void {
+  form.value.paths = [...new Set([...form.value.paths, ...paths])]
+  browserOpen.value = false
 }
 
 async function submitForm(): Promise<void> {
@@ -161,6 +168,7 @@ onMounted(load)
           :value="form.paths.join('\n')"
           @input="form.paths = pathsText(($event.target as HTMLTextAreaElement).value)"
         />
+        <button type="button" @click="browserOpen = true">{{ t('jobs.browse') }}</button>
       </label>
       <label>
         <span>{{ t('jobs.exclude') }}</span>
@@ -176,6 +184,8 @@ onMounted(load)
         <button type="button" @click="editing = null">{{ t('cancel') }}</button>
       </div>
     </form>
+
+    <FileBrowser v-if="browserOpen" multiple @select="addPaths" @close="browserOpen = false" />
 
     <div class="cards">
       <article v-for="job in jobs" :key="job.name" class="panel card">

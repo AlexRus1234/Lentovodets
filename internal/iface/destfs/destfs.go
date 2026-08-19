@@ -62,6 +62,12 @@ func (f *relocFS) Stat(path string) (port.Entry, error) {
 	return f.inner.Stat(path)
 }
 
+// ReadDir передаётся внутренней ФС без изменений: браузер показывает ФС
+// сервера, а не виртуальное дерево каталога назначения.
+func (f *relocFS) ReadDir(path string) ([]port.DirEntry, error) {
+	return f.inner.ReadDir(path)
+}
+
 // MkdirAll создаёт каталог под dest.
 func (f *relocFS) MkdirAll(path string, perm os.FileMode) error {
 	return f.inner.MkdirAll(f.relocate(path), perm)

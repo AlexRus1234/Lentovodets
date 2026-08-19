@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 
 	"lentovodec/internal/adapter/osfs"
@@ -210,6 +211,55 @@ func TestStat_MissingPath(t *testing.T) {
 	_, err := f.Stat(filepath.Join(t.TempDir(), "нет"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestReadDir_SortsDirectoriesThenNames(t *testing.T) {
+	root := newTestTree(t)
+	if err := os.WriteFile(filepath.Join(root, "z.txt"), []byte("z"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := osfs.New()
+	entries, err := f.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("len(entries) = %d, want 3", len(entries))
+	}
+	got := []string{entries[0].Name, entries[1].Name, entries[2].Name}
+	want := []string{"sub", "a.txt", "z.txt"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("entries = %v, want %v", got, want)
+	}
+	if entries[0].ModTime.IsZero() {
+		t.Errorf("directory details = %+v", entries[0])
+	}
+}
+
+func TestReadDir_DoesNotFilterHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".hidden"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := osfs.New().ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name != ".hidden" {
+		t.Fatalf("ReadDir hidden = %+v, %v", entries, err)
+	}
+}
+
+func TestReadDir_Errors(t *testing.T) {
+	f := osfs.New()
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := f.ReadDir(missing); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("missing error = %v, want fs.ErrNotExist", err)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ReadDir(file); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("file error = %v, want syscall.ENOTDIR", err)
 	}
 }
 

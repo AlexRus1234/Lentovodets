@@ -100,6 +100,19 @@ export interface FileCopy extends FileEntry {
   timestamp: number
 }
 
+export interface FsEntry {
+  name: string
+  is_dir: boolean
+  size: number
+  mtime: number
+}
+
+export interface FsList {
+  path: string
+  parent: string
+  entries: FsEntry[]
+}
+
 export interface LoginResponse {
   token: string
   expires_at: string
@@ -240,6 +253,11 @@ export function addJob(job: Job): Promise<Job> {
 
 export function removeJob(name: string): Promise<void> {
   return request('DELETE', `/jobs/${encodeURIComponent(name)}`)
+}
+
+// listFs возвращает непосредственное содержимое ФС сервера.
+export function listFs(path?: string): Promise<FsList> {
+  return request('GET', '/fs/list', { query: { path: path || '/' } })
 }
 
 // --- Асинхронные задачи (§6.4) ---

@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -92,6 +93,36 @@ func (m *MapFS) Stat(p string) (port.Entry, error) {
 		return nil, err
 	}
 	return info, nil
+}
+
+// ReadDir перечисляет непосредственное содержимое каталога в том же порядке,
+// что и osfs. Ссылки в MapFS также не разыменовываются.
+func (m *MapFS) ReadDir(p string) ([]port.DirEntry, error) {
+	name := toFSName(p)
+	if name == "" {
+		name = "."
+	}
+	entries, err := fs.ReadDir(m.MapFS, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]port.DirEntry, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, port.DirEntry{
+			Name: entry.Name(), IsDir: entry.IsDir(), Size: info.Size(), ModTime: info.ModTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
 
 // MkdirAll создаёт каталог и всех отсутствующих родителей.

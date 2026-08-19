@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"lentovodec/internal/port"
 )
@@ -33,6 +34,33 @@ func (f *FS) Open(path string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("osfs: открытие %q: %w", path, err)
 	}
 	return rc, nil
+}
+
+// ReadDir перечисляет содержимое каталога без фильтрации скрытых файлов.
+// os.ReadDir использует lstat для DirEntry, поэтому symlink на каталог не
+// превращается в каталог для навигации.
+func (f *FS) ReadDir(path string) ([]port.DirEntry, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("osfs: чтение каталога %q: %w", path, err)
+	}
+	out := make([]port.DirEntry, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("osfs: сведения о %q: %w", entry.Name(), err)
+		}
+		out = append(out, port.DirEntry{
+			Name: entry.Name(), IsDir: entry.IsDir(), Size: info.Size(), ModTime: info.ModTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
 
 // Stat возвращает сведения об элементе по пути.

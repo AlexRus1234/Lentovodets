@@ -39,6 +39,15 @@ type Entry interface {
 	Mode() os.FileMode
 }
 
+// DirEntry — сведения об элементе непосредственного содержимого каталога.
+// Ссылки не разыменовываются: IsDir отражает lstat-состояние элемента.
+type DirEntry struct {
+	Name    string
+	IsDir   bool
+	Size    int64
+	ModTime time.Time
+}
+
 // Walker — рекурсивный обход дерева от root. Для каждого элемента
 // (включая сам root) вызывается fn; порядок обхода не гарантирован.
 // Ошибка из fn останавливает обход и возвращается из Walk.
@@ -73,4 +82,7 @@ type Filesystem interface {
 	Walker
 	FileReader
 	FileWriter
+	// ReadDir возвращает непосредственное содержимое path. Реализация
+	// сортирует каталоги первыми, затем элементы по имени.
+	ReadDir(path string) ([]DirEntry, error)
 }
