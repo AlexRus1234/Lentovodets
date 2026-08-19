@@ -74,9 +74,9 @@ async function load(path: string): Promise<void> {
 }
 
 function toggle(entry: FsEntry): void {
-	const path = childPath(entry.name)
-	if (!props.multiple && !entry.is_dir) return
-	if (!props.multiple) {
+  const path = childPath(entry.name)
+  if (!props.multiple && !entry.is_dir) return
+  if (!props.multiple) {
     selected.value = new Set([path])
     return
   }
