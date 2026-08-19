@@ -33,11 +33,16 @@ import (
 // Added/Modified для изменившихся путей, Deleted-tombstone'ы для
 // пропавших (только режим mirror). Неизменённые пути не возвращаются.
 type Scanner struct {
-	fs     port.Filesystem
-	hasher port.Hasher
-	prog   port.ProgressReporter // nil допустим
-	log    *slog.Logger
+	fs              port.Filesystem
+	hasher          port.Hasher
+	prog            port.ProgressReporter // nil допустим
+	log             *slog.Logger
+	skippedSpecials int
 }
+
+// SkippedSpecials returns the number of unsupported special entries skipped by
+// the most recent Scan call.
+func (s *Scanner) SkippedSpecials() int { return s.skippedSpecials }
 
 // New создаёт сканер. Прошлый снимок передаётся в Scan, поэтому
 // каталог сканеру не нужен.
@@ -65,47 +70,27 @@ func (s *Scanner) Scan(ctx context.Context, job domain.Job, lastSnapshot []domai
 		slog.Int("snapshot_files", len(snapshot)))
 
 	var (
-		result []domain.FileMeta
-		seen   = make(map[string]bool)
-		bytes  int64
+		result          []domain.FileMeta
+		seen            = make(map[string]bool)
+		links           = make(map[string]string)
+		bytes           int64
+		skippedSpecials int
 	)
+	s.skippedSpecials = 0
 	for _, root := range job.Paths {
 		if err := s.fs.Walk(ctx, root, func(path string, info port.Entry) error {
-			p := domain.NormalizePath(path)
-			if excludedPath(p, job.Exclude) {
+			cur, include, special, err := s.scanEntry(path, info, job, snapshot, seen, links)
+			if err != nil {
+				return err
+			}
+			if special {
+				skippedSpecials++
 				return nil
 			}
-			if seen[p] {
+			if !include {
 				return nil
 			}
-			seen[p] = true
-
-			cur := domain.FileMeta{
-				Path:    p,
-				ModTime: info.ModTime().UnixNano(),
-				IsDir:   info.IsDir(),
-			}
-			if !cur.IsDir {
-				// Размер только у файлов: Lstat-размер каталога
-				// платформозависим (Windows 0, Linux ≠ 0) и данными не
-				// является; модификация каталога детектится по mtime.
-				cur.Size = info.Size()
-			}
-			prev, existed := snapshot[p]
-			switch {
-			case !existed:
-				cur.State = domain.StateAdded
-			case prev.Size == cur.Size && prev.ModTime == cur.ModTime:
-				return nil // не изменился — в сессию не попадает
-			default:
-				cur.State = domain.StateModified
-			}
-			if !cur.IsDir {
-				hash, err := s.hashFile(cur.Path)
-				if err != nil {
-					return err
-				}
-				cur.Hash = hash
+			if !cur.IsDir && !cur.IsSymlink() && !cur.IsHardlink() {
 				bytes += cur.Size
 			}
 			s.report(port.ProgressUpdate{
@@ -119,12 +104,81 @@ func (s *Scanner) Scan(ctx context.Context, job domain.Job, lastSnapshot []domai
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 	}
+	// The use case obtains this count through the scan result metadata. Special
+	// entries are intentionally not represented in the tape index.
+	s.skippedSpecials = skippedSpecials
 
 	if job.Mode == domain.ModeMirror {
 		result = append(result, tombstones(snapshot, seen, job)...)
 	}
 	s.log.Debug("scan finished", slog.Int("changed", len(result)))
 	return result, nil
+}
+
+func (s *Scanner) scanEntry(
+	path string,
+	info port.Entry,
+	job domain.Job,
+	snapshot map[string]domain.FileMeta,
+	seen map[string]bool,
+	links map[string]string,
+) (domain.FileMeta, bool, bool, error) {
+	p := domain.NormalizePath(path)
+	if excludedPath(p, job.Exclude) || seen[p] {
+		return domain.FileMeta{}, false, false, nil
+	}
+	seen[p] = true
+	if port.IsSpecial(info.Mode()) {
+		s.log.Warn("special filesystem entry skipped", slog.String("path", p))
+		return domain.FileMeta{}, false, true, nil
+	}
+	cur, err := s.entryMeta(path, p, info)
+	if err != nil {
+		return domain.FileMeta{}, false, false, err
+	}
+	prev, existed := snapshot[p]
+	if existed && prev.Size == cur.Size && prev.ModTime == cur.ModTime {
+		return domain.FileMeta{}, false, false, nil
+	}
+	if existed {
+		cur.State = domain.StateModified
+	} else {
+		cur.State = domain.StateAdded
+	}
+	setHardlink(&cur, info.LinkID(), links)
+	if !cur.IsDir && !cur.IsSymlink() && !cur.IsHardlink() {
+		cur.Hash, err = s.hashFile(cur.Path)
+		if err != nil {
+			return domain.FileMeta{}, false, false, err
+		}
+	}
+	return cur, true, false, nil
+}
+
+func (s *Scanner) entryMeta(path, normalized string, info port.Entry) (domain.FileMeta, error) {
+	cur := domain.FileMeta{Path: normalized, ModTime: info.ModTime().UnixNano(), IsDir: info.IsDir()}
+	if port.IsSymlink(info.Mode()) {
+		link, err := s.fs.Readlink(path)
+		if err != nil {
+			return domain.FileMeta{}, fmt.Errorf("scan: readlink %q: %w", path, err)
+		}
+		cur.Type, cur.Linkname = domain.FileTypeSymlink, link
+		cur.Size = int64(len(link))
+	} else if !cur.IsDir {
+		cur.Size = info.Size()
+	}
+	return cur, nil
+}
+
+func setHardlink(cur *domain.FileMeta, id string, links map[string]string) {
+	if cur.IsDir || cur.IsSymlink() || id == "" {
+		return
+	}
+	if first, ok := links[id]; ok {
+		cur.Type, cur.Linkname = domain.FileTypeHardlink, first
+		return
+	}
+	links[id] = cur.Path
 }
 
 // tombstones возвращает Deleted-записи для путей снимка, отсутствующих

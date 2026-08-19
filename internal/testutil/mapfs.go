@@ -44,14 +44,17 @@ import (
 // напрямую: fs.MapFS["etc/hosts"].ModTime = ...).
 type MapFS struct {
 	fstest.MapFS
-	mu sync.Mutex
+	mu    sync.Mutex
+	links map[string]string
+	ids   map[string]string
 }
 
 // NewMapFS создаёт файловую систему из карты путь→содержимое.
 func NewMapFS(files map[string]string) *MapFS {
-	m := &MapFS{MapFS: fstest.MapFS{}}
+	m := &MapFS{MapFS: fstest.MapFS{}, links: make(map[string]string), ids: make(map[string]string)}
 	for p, content := range files {
 		m.MapFS[toFSName(p)] = &fstest.MapFile{Data: []byte(content), Mode: 0o644}
+		m.ids[toFSName(p)] = toFSName(p)
 	}
 	return m
 }
@@ -73,7 +76,7 @@ func (m *MapFS) Walk(ctx context.Context, root string, fn func(p string, info po
 		if err != nil {
 			return err
 		}
-		return fn(fromFSName(p), info)
+		return fn(fromFSName(p), mapEntry{FileInfo: info, id: m.linkID(fromFSName(p))})
 	})
 }
 
@@ -88,11 +91,69 @@ func (m *MapFS) Open(p string) (io.ReadCloser, error) {
 
 // Stat возвращает сведения об элементе.
 func (m *MapFS) Stat(p string) (port.Entry, error) {
+	if file, ok := m.MapFS[toFSName(p)]; ok {
+		return mapFileEntry{name: path.Base(toFSName(p)), file: file, id: m.linkID(p)}, nil
+	}
 	info, err := fs.Stat(m.MapFS, toFSName(p))
 	if err != nil {
 		return nil, err
 	}
-	return info, nil
+	return mapEntry{FileInfo: info, id: m.linkID(p)}, nil
+}
+
+// mapFileEntry exposes the entry stored in MapFS without resolving symlinks.
+// fs.Stat follows links, while port.FileReader.Stat has lstat semantics.
+type mapFileEntry struct {
+	name string
+	file *fstest.MapFile
+	id   string
+}
+
+func (e mapFileEntry) Name() string       { return e.name }
+func (e mapFileEntry) Size() int64        { return int64(len(e.file.Data)) }
+func (e mapFileEntry) ModTime() time.Time { return e.file.ModTime }
+func (e mapFileEntry) IsDir() bool        { return e.file.Mode.IsDir() }
+func (e mapFileEntry) Mode() fs.FileMode  { return e.file.Mode }
+func (e mapFileEntry) Sys() any           { return e.file.Sys }
+func (e mapFileEntry) LinkID() string     { return e.id }
+
+type mapEntry struct {
+	fs.FileInfo
+	id string
+}
+
+func (e mapEntry) LinkID() string { return e.id }
+func (m *MapFS) linkID(p string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id := m.ids[toFSName(p)]; id != "" {
+		return id
+	}
+	id := toFSName(p)
+	m.ids[toFSName(p)] = id
+	return id
+}
+
+// AddSymlink adds a non-dereferenced symbolic link to the synthetic tree.
+func (m *MapFS) AddSymlink(p, target string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	name := toFSName(p)
+	m.MapFS[name] = &fstest.MapFile{Mode: fs.ModeSymlink | 0o777}
+	m.links[name] = target
+}
+
+// SetLinkID makes two synthetic regular entries share an inode identity.
+func (m *MapFS) SetLinkID(p, id string) { m.mu.Lock(); defer m.mu.Unlock(); m.ids[toFSName(p)] = id }
+
+func (m *MapFS) Readlink(p string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	link, ok := m.links[toFSName(p)]
+	if !ok {
+		return "", &fs.PathError{Op: "readlink", Path: p, Err: fs.ErrInvalid}
+	}
+	return link, nil
 }
 
 // ReadDir перечисляет непосредственное содержимое каталога в том же порядке,
@@ -154,6 +215,29 @@ func (m *MapFS) Remove(p string) error {
 		return &fs.PathError{Op: "remove", Path: p, Err: fs.ErrNotExist}
 	}
 	delete(m.MapFS, name)
+	return nil
+}
+
+func (m *MapFS) Symlink(linkname, p string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	name := toFSName(p)
+	delete(m.MapFS, name)
+	m.MapFS[name] = &fstest.MapFile{Mode: fs.ModeSymlink | 0o777}
+	m.links[name] = linkname
+	return nil
+}
+
+func (m *MapFS) Link(oldname, newname string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.MapFS[toFSName(oldname)]
+	if old == nil {
+		return &fs.PathError{Op: "link", Path: oldname, Err: fs.ErrNotExist}
+	}
+	name := toFSName(newname)
+	m.MapFS[name] = old
+	m.ids[name] = m.ids[toFSName(oldname)]
 	return nil
 }
 

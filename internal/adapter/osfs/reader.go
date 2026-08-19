@@ -65,9 +65,17 @@ func (f *FS) ReadDir(path string) ([]port.DirEntry, error) {
 
 // Stat возвращает сведения об элементе по пути.
 func (f *FS) Stat(path string) (port.Entry, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("osfs: stat %q: %w", path, err)
 	}
-	return info, nil
+	return entry{FileInfo: info}, nil
+}
+
+func (f *FS) Readlink(path string) (string, error) {
+	link, err := os.Readlink(path)
+	if err != nil {
+		return "", fmt.Errorf("osfs: readlink %q: %w", path, err)
+	}
+	return link, nil
 }

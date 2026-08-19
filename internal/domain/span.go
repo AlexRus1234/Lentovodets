@@ -280,7 +280,7 @@ func spanTotal(part SpanPart) int64 {
 
 // spanCost — расход бюджета файла: tombstone'ы и каталоги бесплатны.
 func spanCost(fm FileMeta) int64 {
-	if fm.IsDir || fm.IsDeleted() {
+	if fm.IsDir || fm.IsDeleted() || fm.IsSymlink() || fm.IsHardlink() {
 		return 0
 	}
 	return fm.Size

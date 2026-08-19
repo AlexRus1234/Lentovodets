@@ -385,6 +385,70 @@ func TestScan_ProgressUpdates(t *testing.T) {
 	}
 }
 
+func TestScan_SymlinkDanglingAndHardlinkPair(t *testing.T) {
+	m := testutil.NewMapFS(map[string]string{"etc/first": "payload", "etc/second": "payload"})
+	m.AddSymlink("/etc/dangling", "missing-target")
+	m.SetLinkID("/etc/first", "dev:ino")
+	m.SetLinkID("/etc/second", "dev:ino")
+	got, err := newScanner(m).Scan(context.Background(), domain.Job{
+		Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := make(map[string]domain.FileMeta, len(got))
+	for _, fm := range got {
+		byPath[fm.Path] = fm
+	}
+	if fm := byPath["/etc/dangling"]; !fm.IsSymlink() || fm.Linkname != "missing-target" || fm.Hash != "" || fm.Size != int64(len("missing-target")) {
+		t.Errorf("dangling symlink = %+v", fm)
+	}
+	if fm := byPath["/etc/first"]; fm.IsHardlink() || fm.Hash == "" {
+		t.Errorf("first hardlink = %+v, want regular content", fm)
+	}
+	if fm := byPath["/etc/second"]; !fm.IsHardlink() || fm.Linkname != "/etc/first" || fm.Hash != "" {
+		t.Errorf("second hardlink = %+v", fm)
+	}
+}
+
+func TestScan_SymlinkMtimeIsCompared(t *testing.T) {
+	m := testutil.NewMapFS(nil)
+	m.AddSymlink("/etc/link", "target")
+	m.MapFS["etc/link"].ModTime = time.Unix(2000, 0)
+	snap := []domain.FileMeta{{Path: "/etc/link", Type: domain.TypeSym, Linkname: "target", Size: 6, ModTime: time.Unix(1000, 0).UnixNano(), State: domain.StateAdded}}
+	got, err := newScanner(m).Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeMirror, Paths: []string{"/etc"}}, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var link *domain.FileMeta
+	for i := range got {
+		if got[i].Path == "/etc/link" {
+			link = &got[i]
+		}
+	}
+	if link == nil || link.State != domain.StateModified {
+		t.Fatalf("symlink mtime change: %+v", got)
+	}
+}
+
+func TestScan_SkipsSpecialEntriesAndCountsThem(t *testing.T) {
+	m := testutil.NewMapFS(map[string]string{"etc/regular": "x"})
+	m.MapFS["etc/fifo"] = &fstest.MapFile{Mode: fs.ModeNamedPipe | 0o644}
+	s := newScanner(m)
+	got, err := s.Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fm := range got {
+		if fm.Path == "/etc/fifo" {
+			t.Fatalf("special entry was scanned: %+v", fm)
+		}
+	}
+	if s.SkippedSpecials() != 1 {
+		t.Fatalf("SkippedSpecials = %d, want 1", s.SkippedSpecials())
+	}
+}
+
 // progressRecorder — собирает все обновления.
 type progressRecorder struct {
 	updates []port.ProgressUpdate

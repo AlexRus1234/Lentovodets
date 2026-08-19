@@ -62,6 +62,8 @@ func (f *relocFS) Stat(path string) (port.Entry, error) {
 	return f.inner.Stat(path)
 }
 
+func (f *relocFS) Readlink(path string) (string, error) { return f.inner.Readlink(path) }
+
 // ReadDir передаётся внутренней ФС без изменений: браузер показывает ФС
 // сервера, а не виртуальное дерево каталога назначения.
 func (f *relocFS) ReadDir(path string) ([]port.DirEntry, error) {
@@ -81,6 +83,14 @@ func (f *relocFS) Create(path string) (io.WriteCloser, error) {
 // Remove удаляет файл/каталог под dest (tombstone'ы mirror-restore).
 func (f *relocFS) Remove(path string) error {
 	return f.inner.Remove(f.relocate(path))
+}
+
+func (f *relocFS) Symlink(linkname, path string) error {
+	return f.inner.Symlink(linkname, f.relocate(path))
+}
+
+func (f *relocFS) Link(oldname, newname string) error {
+	return f.inner.Link(f.relocate(oldname), f.relocate(newname))
 }
 
 // relocate переносит путь из индекса под корень dest: отрезаются

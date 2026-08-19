@@ -48,3 +48,23 @@ func (f *FS) Remove(path string) error {
 	}
 	return nil
 }
+
+func (f *FS) Symlink(linkname, path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("osfs: удаление перед symlink %q: %w", path, err)
+	}
+	if err := os.Symlink(linkname, path); err != nil {
+		return fmt.Errorf("osfs: symlink %q: %w", path, err)
+	}
+	return nil
+}
+
+func (f *FS) Link(oldname, newname string) error {
+	if err := os.Remove(newname); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("osfs: удаление перед link %q: %w", newname, err)
+	}
+	if err := os.Link(oldname, newname); err != nil {
+		return fmt.Errorf("osfs: link %q: %w", newname, err)
+	}
+	return nil
+}

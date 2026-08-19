@@ -67,6 +67,8 @@ func schemaStatements() []string {
 			is_dir     BOOLEAN NOT NULL,
 			hash       TEXT NOT NULL,
 			state      TEXT NOT NULL CHECK (state IN ('A', 'M', 'D')),
+			type       TEXT NOT NULL DEFAULT 'reg',
+			linkname   TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_path    ON files(path)`,
@@ -107,6 +109,7 @@ func (c *Catalog) applyMigrations() error {
 func migrationList() []func(tx *sql.Tx) error {
 	return []func(tx *sql.Tx) error{
 		migrateV1,
+		migrateV2,
 	}
 }
 
@@ -129,4 +132,22 @@ func migrateV1(tx *sql.Tx) error {
 		return nil
 	}
 	return fmt.Errorf("sqlite: ALTER sessions ADD part: %w", err)
+}
+
+// migrateV2 adds the additive special-file columns. Defaults preserve the
+// meaning of every row written by the previous schema.
+func migrateV2(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE files ADD COLUMN type TEXT NOT NULL DEFAULT 'reg'`,
+		`ALTER TABLE files ADD COLUMN linkname TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "no such table") || strings.Contains(msg, "duplicate column name") {
+				continue
+			}
+			return fmt.Errorf("sqlite: ALTER files: %w", err)
+		}
+	}
+	return nil
 }

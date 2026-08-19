@@ -40,11 +40,12 @@ type Options struct {
 
 // Stats — статистика запуска.
 type Stats struct {
-	Scanned  int   // изменившихся путей (Added+Modified+Deleted)
-	Added    int   // новых
-	Modified int   // изменённых
-	Deleted  int   // tombstone'ов (mirror)
-	Bytes    int64 // байт к записи (без tombstone'ов)
+	Scanned         int   // изменившихся путей (Added+Modified+Deleted)
+	Added           int   // новых
+	Modified        int   // изменённых
+	Deleted         int   // tombstone'ов (mirror)
+	Bytes           int64 // байт к записи (без tombstone'ов)
+	SkippedSpecials int   // FIFO, sockets and device nodes skipped during scan
 }
 
 // Result — итог запуска.
@@ -139,6 +140,7 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 		return Result{}, err
 	}
 	stats := statsOf(files)
+	stats.SkippedSpecials = sc.SkippedSpecials()
 
 	plan, err := uc.planSpanning(ctx, st.job, opts, st.lastNum, st.sessions, files)
 	if err != nil {
@@ -493,7 +495,7 @@ func statsOf(files []domain.FileMeta) Stats {
 		default:
 			st.Modified++
 		}
-		if !fm.IsDeleted() {
+		if !fm.IsDeleted() && !fm.IsSymlink() && !fm.IsHardlink() {
 			st.Bytes += fm.Size
 		}
 	}

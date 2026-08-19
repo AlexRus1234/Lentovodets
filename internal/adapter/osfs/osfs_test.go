@@ -22,6 +22,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -161,6 +162,71 @@ func TestWalk_RootNotFound(t *testing.T) {
 	err := f.Walk(context.Background(), missing, func(_ string, _ port.Entry) error { return nil })
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestWalk_SymlinkIsNotDereferenced(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges are environment-dependent on Windows")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	link := filepath.Join(root, "link")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	var got port.Entry
+	if err := osfs.New().Walk(context.Background(), root, func(p string, info port.Entry) error {
+		if p == link {
+			got = info
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Mode()&os.ModeSymlink == 0 || got.IsDir() {
+		t.Fatalf("symlink entry = %#v, want lstat symlink", got)
+	}
+	if _, err := osfs.New().Stat(link); err != nil {
+		t.Fatal(err)
+	}
+	name, err := osfs.New().Readlink(link)
+	if err != nil || name != "target" {
+		t.Fatalf("Readlink = %q, %v", name, err)
+	}
+}
+
+func TestOSFS_SymlinkAndHardlinkRoundTrip(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges are environment-dependent on Windows")
+	}
+	root := t.TempDir()
+	f := osfs.New()
+	first := filepath.Join(root, "first")
+	second := filepath.Join(root, "second")
+	link := filepath.Join(root, "link")
+	if err := os.WriteFile(first, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Link(first, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Symlink("missing", link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	firstInfo, err := os.Stat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInfo, err := os.Stat(second)
+	if err != nil || !os.SameFile(firstInfo, secondInfo) {
+		t.Fatalf("hardlink identity: %v, %v, same=%v", firstInfo, secondInfo, err == nil && os.SameFile(firstInfo, secondInfo))
+	}
+	if got, err := f.Readlink(link); err != nil || got != "missing" {
+		t.Fatalf("dangling Readlink = %q, %v", got, err)
 	}
 }
 

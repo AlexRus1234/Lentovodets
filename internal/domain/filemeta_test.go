@@ -18,6 +18,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"lentovodec/internal/domain"
@@ -39,6 +40,40 @@ func TestFileStateValid(t *testing.T) {
 		if got := tt.state.Valid(); got != tt.want {
 			t.Errorf("FileState(%q).Valid() = %v, want %v", tt.state, got, tt.want)
 		}
+	}
+}
+
+func TestFileMetaValidateSpecialTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		meta    domain.FileMeta
+		wantErr string
+	}{
+		{name: "old regular", meta: domain.FileMeta{Path: "/old"}},
+		{name: "regular linkname", meta: domain.FileMeta{Path: "/f", Linkname: "/target"}, wantErr: "regular file"},
+		{name: "symlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.TypeSym}, wantErr: "no linkname"},
+		{name: "hardlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.TypeLink}, wantErr: "no linkname"},
+		{name: "unknown type", meta: domain.FileMeta{Path: "/f", Type: "fifo"}, wantErr: "invalid type"},
+		{name: "symlink", meta: domain.FileMeta{Path: "/link", Type: domain.TypeSym, Linkname: "missing"}},
+		{name: "hardlink", meta: domain.FileMeta{Path: "/link", Type: domain.TypeLink, Linkname: "/first"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.meta.Validate()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Validate = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFileMetaOldTypeMeansRegular(t *testing.T) {
+	fm := domain.FileMeta{Path: "/old", Linkname: ""}
+	if fm.IsSymlink() || fm.IsHardlink() || !fm.ValidType() {
+		t.Fatalf("old metadata interpreted incorrectly: %+v", fm)
 	}
 }
 

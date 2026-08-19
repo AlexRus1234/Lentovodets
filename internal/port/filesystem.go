@@ -37,7 +37,16 @@ type Entry interface {
 	ModTime() time.Time // время последней модификации
 	IsDir() bool
 	Mode() os.FileMode
+	LinkID() string
 }
+
+// IsSpecial reports filesystem modes that are not represented on tape.
+func IsSpecial(mode os.FileMode) bool {
+	return mode&(os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0
+}
+
+// IsSymlink reports whether mode describes a symbolic link.
+func IsSymlink(mode os.FileMode) bool { return mode&os.ModeSymlink != 0 }
 
 // DirEntry — сведения об элементе непосредственного содержимого каталога.
 // Ссылки не разыменовываются: IsDir отражает lstat-состояние элемента.
@@ -62,6 +71,7 @@ type FileReader interface {
 
 	// Stat возвращает сведения об элементе по пути.
 	Stat(path string) (Entry, error)
+	Readlink(path string) (string, error)
 }
 
 // FileWriter — создание и удаление файлов и каталогов (для restore).
@@ -74,6 +84,8 @@ type FileWriter interface {
 
 	// Remove удаляет файл или пустой каталог.
 	Remove(path string) error
+	Symlink(linkname, path string) error
+	Link(oldname, newname string) error
 }
 
 // Filesystem — полный FS-порт одной зависимостью: реализация

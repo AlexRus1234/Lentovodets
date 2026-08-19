@@ -47,6 +47,19 @@ CREATE TABLE sessions (
 	UNIQUE (tape_uuid, session_num)
 );`
 
+const oldSchemaV1DDL = oldSchemaDDL + `
+CREATE TABLE files (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id INTEGER NOT NULL,
+	path       TEXT NOT NULL,
+	size       INTEGER NOT NULL,
+	mod_time   INTEGER NOT NULL,
+	is_dir     BOOLEAN NOT NULL,
+	hash       TEXT NOT NULL,
+	state      TEXT NOT NULL,
+	FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);`
+
 // userVersion читает PRAGMA user_version отдельным соединением.
 func userVersion(t *testing.T, path string) int {
 	t.Helper()
@@ -62,8 +75,8 @@ func userVersion(t *testing.T, path string) int {
 	return v
 }
 
-// TestMigrateV0ToV1_ExistingDB: БД старой схемы открывается конструктором,
-// колонка part добавляется, старые строки получают 1, user_version = 1.
+// TestMigrateV0ToV2_ExistingDB: БД старой схемы открывается конструктором,
+// колонки part и special-file добавляются, user_version = 2.
 func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	path := t.TempDir() + "/catalog.db"
 	raw, err := sql.Open("sqlite", path)
@@ -101,8 +114,8 @@ func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	if len(sessions) != 2 || sessions[0].Part != 1 || sessions[1].Part != 1 {
 		t.Fatalf("старые строки: %+v, want part=1 у обеих", sessions)
 	}
-	if v := userVersion(t, path); v != 1 {
-		t.Fatalf("user_version = %d, want 1", v)
+	if v := userVersion(t, path); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
 	}
 
 	// Повторное открытие: миграция не применяется второй раз.
@@ -113,8 +126,8 @@ func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	if err := c2.Close(); err != nil {
 		t.Fatalf("Close повторно: %v", err)
 	}
-	if v := userVersion(t, path); v != 1 {
-		t.Fatalf("user_version после повторного открытия = %d, want 1", v)
+	if v := userVersion(t, path); v != 2 {
+		t.Fatalf("user_version после повторного открытия = %d, want 2", v)
 	}
 }
 
@@ -146,8 +159,8 @@ func TestMigrateV1_ColumnAlreadyExists(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	if v := userVersion(t, path); v != 1 {
-		t.Fatalf("user_version = %d, want 1", v)
+	if v := userVersion(t, path); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
 	}
 }
 
@@ -174,8 +187,8 @@ func TestMigrateV1_AlterFails(t *testing.T) {
 	}
 }
 
-// TestFreshDB_SchemaV1: новая БД создаётся сразу актуальной схемой —
-// user_version = 1, колонка part работает без миграций.
+// TestFreshDB_SchemaV2: новая БД создаётся сразу актуальной схемой —
+// user_version = 2, колонки part/type/linkname работают без миграций.
 func TestFreshDB_SchemaV1(t *testing.T) {
 	path := t.TempDir() + "/catalog.db"
 	c, err := sqlite.New(path)
@@ -187,8 +200,8 @@ func TestFreshDB_SchemaV1(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	if v := userVersion(t, path); v != 1 {
-		t.Fatalf("user_version свежей БД = %d, want 1", v)
+	if v := userVersion(t, path); v != 2 {
+		t.Fatalf("user_version свежей БД = %d, want 2", v)
 	}
 
 	ctx := context.Background()
@@ -208,5 +221,40 @@ func TestFreshDB_SchemaV1(t *testing.T) {
 	}
 	if len(chain) != 1 || chain[0].ID != id || chain[0].Part != 2 {
 		t.Fatalf("chain = %+v, want одна сессия part=2", chain)
+	}
+}
+
+func TestMigrateV1ToV2_DefaultsAndRoundTripSpecialFields(t *testing.T) {
+	path := t.TempDir() + "/catalog.db"
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(oldSchemaV1DDL); err != nil {
+		t.Fatalf("old v1 schema: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO tapes VALUES ('tape-1', 'media', 1);
+		INSERT INTO sessions (tape_uuid, session_num, type, timestamp, job_run_id) VALUES ('tape-1', 1, 'FULL', 1, 'run');
+		INSERT INTO files (session_id, path, size, mod_time, is_dir, hash, state) VALUES (1, '/old', 3, 4, 0, 'hash', 'A');`); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sqlite.New(path)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	defer c.Close()
+	files, err := c.GetFilesBySession(context.Background(), 1)
+	if err != nil || len(files) != 1 || files[0].Type != domain.TypeReg || files[0].Linkname != "" {
+		t.Fatalf("migrated old row = %+v, err=%v", files, err)
+	}
+	if err := c.SaveFiles(context.Background(), 1, []domain.FileMeta{{Path: "/sym", Type: domain.TypeSym, Linkname: "missing", Size: 7, State: domain.StateAdded}}); err != nil {
+		t.Fatal(err)
+	}
+	files, err = c.GetFilesBySession(context.Background(), 1)
+	if err != nil || len(files) != 2 || files[1].Type != domain.TypeSym || files[1].Linkname != "missing" {
+		t.Fatalf("special fields round-trip = %+v, err=%v", files, err)
 	}
 }

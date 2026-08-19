@@ -19,6 +19,35 @@
 
 package domain
 
+import "fmt"
+
+// FileType describes how a filesystem entry is represented in the archive.
+type FileType string
+
+const (
+	FileTypeRegular  FileType = "reg"
+	FileTypeSymlink  FileType = "sym"
+	FileTypeHardlink FileType = "lnk"
+	// Short names are kept next to the wire values for callers constructing metadata.
+	TypeReg      = FileTypeRegular
+	TypeSym      = FileTypeSymlink
+	TypeLink     = FileTypeHardlink
+	FileTypeReg  = FileTypeRegular
+	FileTypeSym  = FileTypeSymlink
+	FileTypeLink = FileTypeHardlink
+)
+
+func (t FileType) Valid() bool {
+	return t == "" || t == FileTypeRegular || t == FileTypeSymlink || t == FileTypeHardlink
+}
+
+func (t FileType) normalized() FileType {
+	if t == "" {
+		return FileTypeRegular
+	}
+	return t
+}
+
 // FileState — состояние файла относительно предыдущей сессии.
 // Значение совпадает с символом в БД и JSON-индексе на ленте.
 type FileState string
@@ -43,12 +72,14 @@ func (s FileState) Valid() bool {
 
 // FileMeta — метаданные одного файла в конкретной сессии.
 type FileMeta struct {
-	Path    string    `json:"path"`     // всегда NormalizePath
-	Size    int64     `json:"size"`     // байты; 0 для каталогов
-	ModTime int64     `json:"mod_time"` // Unix-наносекунды mtime файла
-	IsDir   bool      `json:"is_dir"`   // true для каталогов
-	Hash    string    `json:"hash"`     // xxhash64 hex (16 символов); "" для каталогов и tombstone'ов
-	State   FileState `json:"state"`
+	Path     string    `json:"path"`     // всегда NormalizePath
+	Size     int64     `json:"size"`     // байты; 0 для каталогов
+	ModTime  int64     `json:"mod_time"` // Unix-наносекунды mtime файла
+	IsDir    bool      `json:"is_dir"`   // true для каталогов
+	Hash     string    `json:"hash"`     // xxhash64 hex (16 символов); "" для каталогов и tombstone'ов
+	State    FileState `json:"state"`
+	Type     FileType  `json:"type,omitempty"`
+	Linkname string    `json:"linkname,omitempty"`
 }
 
 // IsAdded сообщает, что файл новый в этой сессии.
@@ -56,3 +87,23 @@ func (fm FileMeta) IsAdded() bool { return fm.State == StateAdded }
 
 // IsDeleted сообщает, что запись — tombstone на удалённый файл.
 func (fm FileMeta) IsDeleted() bool { return fm.State == StateDeleted }
+
+func (fm FileMeta) IsSymlink() bool  { return fm.Type.normalized() == FileTypeSymlink }
+func (fm FileMeta) IsHardlink() bool { return fm.Type.normalized() == FileTypeHardlink }
+
+// Validate checks the additive special-file invariants. Empty Type is the
+// representation used by old indexes and means a regular file.
+func (fm FileMeta) Validate() error {
+	if !fm.ValidType() {
+		return fmt.Errorf("file %q: invalid type %q", fm.Path, fm.Type)
+	}
+	if (fm.IsSymlink() || fm.IsHardlink()) && fm.Linkname == "" {
+		return fmt.Errorf("file %q: %s has no linkname", fm.Path, fm.Type)
+	}
+	if !fm.IsSymlink() && !fm.IsHardlink() && fm.Linkname != "" {
+		return fmt.Errorf("file %q: regular file has linkname", fm.Path)
+	}
+	return nil
+}
+
+func (fm FileMeta) ValidType() bool { return fm.Type.Valid() }

@@ -78,6 +78,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | `IsDir`    | bool       | true для каталогов                                              |
 | `Hash`     | string     | xxhash64 в hex (16 символов); пустой для каталогов и tombstone'ов |
 | `State`    | `FileState`| См. 2.5                                                         |
+| `Type`     | `FileType` | `reg` (по умолчанию), `sym` или `lnk`                            |
+| `Linkname` | string     | цель симлинка или путь первого hardlink; пусто для `reg`         |
 
 ### 2.5. `FileState`
 
@@ -146,6 +148,8 @@ CREATE TABLE files (
     is_dir      BOOLEAN NOT NULL,
     hash        TEXT NOT NULL,
     state       TEXT NOT NULL CHECK (state IN ('A', 'M', 'D')),
+    type        TEXT NOT NULL DEFAULT 'reg',
+    linkname    TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -165,6 +169,8 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 - `part` — номер части spanning-цепочки (§2.6), `DEFAULT 1`: до spanning
   каждая сессия — часть 1. Существующие БД мигрируются автоматически
   (`PRAGMA user_version` 0→1, `ALTER TABLE ... ADD COLUMN`).
+- `type` и `linkname` добавлены миграцией схемы v1→v2; старые строки получают
+  `reg` и пустую цель.
 - `PRAGMA foreign_keys = ON;` и `PRAGMA journal_mode = WAL;` — обязательно.
 
 ### 3.2. Контракт `port.Catalog`
@@ -200,6 +206,9 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 4. `Catalog.RegisterTape(uuid, name, now)`.
 
 ### 4.2. `Backup(jobName, opts)`
+
+Сканер сохраняет симлинки и hardlink-пары. FIFO, sockets и device-файлы
+пропускаются с предупреждением и учитываются в `Stats.SkippedSpecials`.
 
 См. диаграмму в [ARCHITECTURE §4.1](ARCHITECTURE.md#41-backupusecasebackupctx-jobname-opts).
 
@@ -273,6 +282,10 @@ tombstone (без tar-вхождения). Это позволяет восст�
 **на момент любой сессии**.
 
 ### 4.3. `RestoreUseCase`
+
+При восстановлении `sym` создаётся симлинк, а `lnk` создаётся операцией
+hardlink. Dangling symlink допустим. Пропущенные special-файлы на ленту не
+попадают.
 
 Три метода.
 

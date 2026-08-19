@@ -73,6 +73,54 @@ func TestReadSession_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadSession_SpecialFilesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	src := testutil.NewMapFS(map[string]string{"/data/first": "payload"})
+	src.AddSymlink("/data/dangling", "missing-target")
+	idx := tapeformat.SessionIndex{FormatVersion: domain.FormatVersion, SessionNum: 1, Type: domain.SessionFull, JobRunID: "run", Timestamp: 1, JobName: "j", Files: []domain.FileMeta{
+		{Path: "/data/first", Size: 7, Hash: hashOf("payload"), State: domain.StateAdded},
+		{Path: "/data/second", Type: domain.TypeLink, Linkname: "/data/first", State: domain.StateAdded},
+		{Path: "/data/dangling", Type: domain.TypeSym, Linkname: "missing-target", Size: 14, State: domain.StateAdded},
+	}}
+	tape := testutil.NewFakeTape()
+	writeFixtureSession(t, tape, idx, src)
+	if err := tape.Rewind(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dest := testutil.NewMapFS(nil)
+	got, err := tapeformat.ReadSession(ctx, tape, dest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, idx.Files) {
+		t.Fatalf("index = %+v, want %+v", got, idx.Files)
+	}
+	if link, err := dest.Readlink("/data/dangling"); err != nil || link != "missing-target" {
+		t.Fatalf("restored symlink = %q, %v", link, err)
+	}
+	first, err := dest.Stat("/data/first")
+	if err != nil || first.IsDir() {
+		t.Fatalf("restored first: %v", err)
+	}
+	second, err := dest.Stat("/data/second")
+	if err != nil || second.IsDir() {
+		t.Fatalf("restored second: %v", err)
+	}
+}
+
+func TestReadSession_OldIndexWithoutTypeIsRegular(t *testing.T) {
+	ctx := context.Background()
+	oldIndex := []byte(`{"format_version":2,"session_num":1,"type":"FULL","job_run_id":"run","timestamp":1,"job_name":"j","files":[{"path":"/f","size":3,"mod_time":1,"is_dir":false,"hash":"` + hashOf("abc") + `","state":"A"}]}`)
+	tape := craftSessionTape(t, oldIndex, craftTar(t, tarEntry{name: "/f", size: 3, content: "abc"}))
+	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Type != "" || files[0].IsSymlink() || files[0].IsHardlink() {
+		t.Fatalf("old file metadata = %+v, want regular semantics", files)
+	}
+}
+
 func TestReadSession_VerifyOnly(t *testing.T) {
 	fs, idx := buildFixture(t)
 	tape := testutil.NewFakeTape()

@@ -137,6 +137,9 @@ func checkFileMeta(fm *domain.FileMeta) error {
 	if !fm.State.Valid() {
 		return fmt.Errorf("tapeformat: файл %q в индексе: недопустимое состояние %q", fm.Path, fm.State)
 	}
+	if err := fm.Validate(); err != nil {
+		return fmt.Errorf("tapeformat: %w", err)
+	}
 	return nil
 }
 
@@ -198,18 +201,58 @@ func extractEntry(
 	})
 	switch hdr.Typeflag {
 	case tar.TypeDir:
-		if dest == nil {
-			return nil
-		}
-		if err := dest.MkdirAll(fm.Path, os.FileMode(hdr.Mode).Perm()); err != nil {
-			return fmt.Errorf("tapeformat: создание каталога %q: %w", fm.Path, err)
-		}
-		return nil
+		return extractDir(hdr, fm, dest)
 	case tar.TypeReg:
 		return extractFile(ctx, tr, hdr, fm, dest, buf, prog, processed, total)
+	case tar.TypeSymlink:
+		return extractSymlink(hdr, fm, dest)
+	case tar.TypeLink:
+		return extractHardlink(hdr, fm, dest)
 	default:
 		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип 0x%x в tar", fm.Path, hdr.Typeflag)
 	}
+}
+
+func extractDir(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) error {
+	if dest == nil {
+		return nil
+	}
+	if err := dest.MkdirAll(fm.Path, os.FileMode(hdr.Mode).Perm()); err != nil {
+		return fmt.Errorf("tapeformat: создание каталога %q: %w", fm.Path, err)
+	}
+	return nil
+}
+
+func extractSymlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) error {
+	if !fm.IsSymlink() || hdr.Linkname != fm.Linkname || hdr.Size != 0 {
+		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path)
+	}
+	if dest == nil {
+		return nil
+	}
+	if err := dest.MkdirAll(path.Dir(fm.Path), 0o755); err != nil {
+		return fmt.Errorf("tapeformat: каталог для %q: %w", fm.Path, err)
+	}
+	if err := dest.Symlink(fm.Linkname, fm.Path); err != nil {
+		return fmt.Errorf("tapeformat: symlink %q: %w", fm.Path, err)
+	}
+	return nil
+}
+
+func extractHardlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) error {
+	if !fm.IsHardlink() || hdr.Linkname != fm.Linkname || hdr.Size != 0 {
+		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path)
+	}
+	if dest == nil {
+		return nil
+	}
+	if err := dest.MkdirAll(path.Dir(fm.Path), 0o755); err != nil {
+		return fmt.Errorf("tapeformat: каталог для %q: %w", fm.Path, err)
+	}
+	if err := dest.Link(fm.Linkname, fm.Path); err != nil {
+		return fmt.Errorf("tapeformat: hardlink %q: %w", fm.Path, err)
+	}
+	return nil
 }
 
 // extractFile читает содержимое файла из tar, пишет его в dest (если задан)

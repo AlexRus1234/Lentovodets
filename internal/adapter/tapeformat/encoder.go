@@ -99,6 +99,9 @@ func validateIndex(idx *SessionIndex) error {
 				idx.Files[i].Path, idx.Files[i].State)
 		}
 		idx.Files[i].Path = domain.NormalizePath(idx.Files[i].Path)
+		if err := idx.Files[i].Validate(); err != nil {
+			return fmt.Errorf("tapeformat: %w", err)
+		}
 	}
 	if idx.Files == nil {
 		idx.Files = []domain.FileMeta{}
@@ -179,25 +182,37 @@ func writeTarFile(
 	processed *int64,
 	total int64,
 ) error {
-	info, err := fs.Stat(fm.Path)
-	if err != nil {
-		return fmt.Errorf("tapeformat: stat %q: %w", fm.Path, err)
+	var info port.Entry
+	var err error
+	if !fm.IsSymlink() && !fm.IsHardlink() {
+		info, err = fs.Stat(fm.Path)
+		if err != nil {
+			return fmt.Errorf("tapeformat: stat %q: %w", fm.Path, err)
+		}
 	}
 	hdr := &tar.Header{
 		Format:   tar.FormatGNU,
 		Name:     fm.Path,
 		Typeflag: tar.TypeReg,
 		Size:     fm.Size,
-		Mode:     int64(info.Mode().Perm()),
+		Mode:     0o644,
 		ModTime:  time.Unix(fm.ModTime/1e9, 0), // наносекунды — только в индексе
 	}
-	if fm.IsDir {
+	switch {
+	case fm.IsDir:
 		hdr.Typeflag = tar.TypeDir
+		hdr.Size = 0
+	case fm.IsSymlink():
+		hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeSymlink, fm.Linkname, 0
+	case fm.IsHardlink():
+		hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, fm.Linkname, 0
+	case info != nil:
+		hdr.Mode = int64(info.Mode().Perm())
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return fmt.Errorf("tapeformat: заголовок tar %q: %w", fm.Path, err)
 	}
-	if fm.IsDir {
+	if fm.IsDir || fm.IsSymlink() || fm.IsHardlink() {
 		return nil
 	}
 	return copyFileToTar(ctx, tw, fm, fs, buf, prog, processed, total)

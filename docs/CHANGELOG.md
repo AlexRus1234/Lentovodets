@@ -27,6 +27,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ### Added
 
+- Сохранение и восстановление symbolic/hard links; пропуск неподдерживаемых
+  special-файлов с подсчётом в статистике.
+
 - Серверный файловый браузер в Web UI: `GET /api/fs/list` с общей
   аутентификацией, хлебными крошками, листингом каталогов и файлов,
   multi-select корней задания и выбором каталога назначения restore. Доступ

@@ -47,10 +47,10 @@ const (
 
 	selectLastSessionNumSQL = `SELECT COALESCE(MAX(session_num), 0) FROM sessions WHERE tape_uuid = ?`
 
-	insertFileSQL = `INSERT INTO files (session_id, path, size, mod_time, is_dir, hash, state)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	insertFileSQL = `INSERT INTO files (session_id, path, size, mod_time, is_dir, hash, state, type, linkname)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	selectLatestStatesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state
+	selectLatestStatesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
 		WHERE f.path IN (%s)
@@ -70,17 +70,17 @@ const (
 
 	sessionExistsSQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)`
 
-	selectFilesBySessionSQL = `SELECT path, size, mod_time, is_dir, hash, state
+	selectFilesBySessionSQL = `SELECT path, size, mod_time, is_dir, hash, state, type, linkname
 		FROM files WHERE session_id = ? ORDER BY path`
 
-	selectFileCopiesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state,
+	selectFileCopiesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname,
 			s.id, s.session_num, s.tape_uuid, s.timestamp
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
 		WHERE f.path = ?
 		ORDER BY s.timestamp DESC, s.id DESC`
 
-	searchFilesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state,
+	searchFilesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname,
 			s.id, s.session_num, s.tape_uuid, s.timestamp
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
@@ -205,7 +205,7 @@ func (c *Catalog) SaveFiles(ctx context.Context, sessionID int64, files []domain
 	for i := range files {
 		f := &files[i]
 		if _, err := stmt.ExecContext(ctx,
-			sessionID, f.Path, f.Size, f.ModTime, f.IsDir, f.Hash, string(f.State)); err != nil {
+			sessionID, f.Path, f.Size, f.ModTime, f.IsDir, f.Hash, string(f.State), f.Type, f.Linkname); err != nil {
 			return rollback(tx, fmt.Errorf("sqlite: вставка файла %q (сессия %d): %w", f.Path, sessionID, err))
 		}
 	}
@@ -248,11 +248,12 @@ func (c *Catalog) latestStatesBatch(ctx context.Context, paths []string, states 
 	}
 	return scanAll(rows, func(rows *sql.Rows) error {
 		var fm domain.FileMeta
-		var state string
-		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state); err != nil {
+		var state, typ string
+		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state, &typ, &fm.Linkname); err != nil {
 			return fmt.Errorf("sqlite: чтение строки состояния: %w", err)
 		}
 		fm.State = domain.FileState(state)
+		fm.Type = domain.FileType(typ)
 		// Строки упорядочены по пути и убыванию времени: первая копия
 		// пути — самая поздняя сессия.
 		if _, seen := states[fm.Path]; !seen {
@@ -362,11 +363,12 @@ func (c *Catalog) GetFilesBySession(ctx context.Context, sessionID int64) ([]dom
 	var files []domain.FileMeta
 	scanErr := scanAll(rows, func(rows *sql.Rows) error {
 		var fm domain.FileMeta
-		var state string
-		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state); err != nil {
+		var state, typ string
+		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state, &typ, &fm.Linkname); err != nil {
 			return fmt.Errorf("sqlite: чтение файла сессии %d: %w", sessionID, err)
 		}
 		fm.State = domain.FileState(state)
+		fm.Type = domain.FileType(typ)
 		files = append(files, fm)
 		return nil
 	})
@@ -395,13 +397,14 @@ func (c *Catalog) fileCopies(ctx context.Context, query, desc string, args ...an
 	var copies []port.FileCopy
 	scanErr := scanAll(rows, func(rows *sql.Rows) error {
 		var fc port.FileCopy
-		var state string
+		var state, typ string
 		if err := rows.Scan(&fc.Meta.Path, &fc.Meta.Size, &fc.Meta.ModTime,
-			&fc.Meta.IsDir, &fc.Meta.Hash, &state,
+			&fc.Meta.IsDir, &fc.Meta.Hash, &state, &typ, &fc.Meta.Linkname,
 			&fc.SessionID, &fc.SessionNum, &fc.TapeUUID, &fc.Timestamp); err != nil {
 			return fmt.Errorf("sqlite: %s: чтение строки: %w", desc, err)
 		}
 		fc.Meta.State = domain.FileState(state)
+		fc.Meta.Type = domain.FileType(typ)
 		copies = append(copies, fc)
 		return nil
 	})

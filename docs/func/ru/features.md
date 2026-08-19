@@ -311,3 +311,9 @@ Dev-режим — `make web-dev` (Vite на `:5173`, прокси `/api` на �
 
 Rootless-модель доступа к стримеру и развёртывание — в
 [os-setup.md](os-setup.md).
+## Специальные файлы
+
+Поддерживаются символические ссылки, включая dangling symlink, и жёсткие
+ссылки: при restore сохраняются соответственно ссылка и общая inode. FIFO,
+сокеты, character/block devices, xattr, ACL и filesystem flags не переносятся;
+такие записи пропускаются сканером и считаются в `SkippedSpecials`.

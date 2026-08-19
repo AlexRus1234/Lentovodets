@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 
 	"lentovodec/internal/port"
 )
@@ -46,10 +47,36 @@ func (f *FS) Walk(ctx context.Context, root string, fn func(path string, info po
 		if err != nil {
 			return fmt.Errorf("osfs: stat %q: %w", p, err)
 		}
-		return fn(p, info)
+		return fn(p, entry{FileInfo: info})
 	})
 	if err != nil {
 		return fmt.Errorf("osfs: обход %q: %w", root, err)
 	}
 	return nil
+}
+
+type entry struct{ fs.FileInfo }
+
+func (e entry) LinkID() string { return linkID(e.FileInfo) }
+func linkID(info fs.FileInfo) string {
+	sys := info.Sys()
+	if sys == nil {
+		return ""
+	}
+	v := reflect.ValueOf(sys)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+	dev, ino := v.FieldByName("Dev"), v.FieldByName("Ino")
+	if dev.IsValid() && ino.IsValid() {
+		return fmt.Sprintf("%v:%v", dev.Interface(), ino.Interface())
+	}
+	volume, high, low := v.FieldByName("VolumeSerialNumber"), v.FieldByName("FileIndexHigh"), v.FieldByName("FileIndexLow")
+	if volume.IsValid() && high.IsValid() && low.IsValid() {
+		return fmt.Sprintf("%v:%v:%v", volume.Interface(), high.Interface(), low.Interface())
+	}
+	return ""
 }
