@@ -106,6 +106,12 @@ func (t *Tape) ForwardFilemarks(ctx context.Context, n int) error {
 
 // BackwardFilemarks пропускает n filemark'ов назад (MTBSFM): позиция —
 // сразу после n-го filemark'а, в начале следующей за ним записи.
+// Over-space — n больше меток позади — EIO от драйвера; на реальном
+// железе (IBM ULT3580-HH5/LTO-5) головка при этом перематывается на
+// BOT, позиция не сохраняется (FakeTape/filetape в ошибке позицию
+// сохраняют — семантика успешных путей совпадает). Продукт метод не
+// использует (ENOSPC-откат идёт Rewind+MTFSF вперёд) — см.
+// test/hardware/diag_test.go.
 func (t *Tape) BackwardFilemarks(ctx context.Context, n int) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -148,19 +148,31 @@ func diagRead(t *testing.T, f *os.File, name string) {
 // TestTapeDiag_BSFM — сценарии MTBSFM на раскладке
 // [b1 0x11][FM1][b2 0x22][FM2][b3 0x33][FM3], EOD — после FM3.
 //
-// С1  BSFM(1) из EOD — канон: no-op (чтение даёт EOF).
-// С1b BSFM(1) дважды — эквивалент BSFM(2): начало b3.
-// С2  BSFM(2) из EOD без предшествующего чтения — канон: начало b3.
-// С3  BSFM(3) из EOD — канон: начало b2.
-// С4  чтение b3, затем BSFM(1) поштучно — чтение/Read-Ahead + одиночный
+// Первый прогон на IBM ULT3580-HH5 (LTO-5) подтвердил совпадение
+// семантики st-драйвера с каноном FakeTape/filetape:
+//   - BSFM(n) в пределах доступных меток работает при любом count,
+//     в т.ч. после чтения (read-ahead не мешает);
+//   - BSFM за пределы меток (С5, С6) — EIO; отличие от эмуляторов:
+//     головка перематывается на BOT (позиция НЕ сохраняется), но
+//     устройство остаётся рабочим — чтение с BOT проходит;
+//   - BSFM(1) из позиции сразу за меткой (С1, С1b) — no-op и при
+//     повторении: позади «та же» метка, повторные BSFM(1) НЕ
+//     эквивалентны BSFM(2).
 //
-//	шаг назад (гипотеза: после чтения падает только count>1).
+// С1  BSFM(1) из EOD — no-op (чтение даёт EOF).
+// С1b BSFM(1) трижды — по-прежнему no-op (см. выше).
+// С2  BSFM(2) из EOD — канон: начало b3 (за FM2).
+// С3  BSFM(3) из EOD — канон: начало b2 (за FM1).
+// С4  чтение b3 (read-ahead), затем поштучные BSFM(1): первый
 //
-// С5  точный сценарий упавшего SessionNavigation: чтение b2, затем
+//	возвращает к началу b3, второй — no-op.
 //
-//	BSFM(2) разом.
+// С5  over-space — воспроизведение старого падения SessionNavigation:
 //
-// С6  BSFM(99) — за пределы меток (ожидаем ошибку — какой код?).
+//	после чтения b2 позади одна метка (FM1), BSFM(2) — EIO + BOT,
+//	следующее чтение даёт b1 (от BOT).
+//
+// С6  BSFM(99) из EOD — over-space: EIO + BOT.
 func TestTapeDiag_BSFM(t *testing.T) {
 	if os.Getenv("LENTOVODEC_TAPE_DIAG") == "" {
 		t.Skip("диагностика выключена: LENTOVODEC_TAPE_DIAG=1")
@@ -200,11 +212,11 @@ func TestTapeDiag_BSFM(t *testing.T) {
 	diagStep(t, f, "C1 BSFM(1) из EOD", diagBSFM, 1)
 	diagRead(t, f, "C1")
 
-	// С1b: два одиночных BSFM(1) — эквивалент BSFM(2).
+	// С1b: BSFM(1) трижды — каждый no-op (позиция уже за FM3).
 	toEOD()
 	diagStep(t, f, "C1b BSFM(1) #1", diagBSFM, 1)
 	diagStep(t, f, "C1b BSFM(1) #2", diagBSFM, 1)
-	diagRead(t, f, "C1b (ожидание b3=0x33)")
+	diagRead(t, f, "C1b (ожидание EOF: no-op)")
 
 	// С2: BSFM(2) из EOD без чтения — начало b3.
 	toEOD()
@@ -237,10 +249,11 @@ func TestTapeDiag_BSFM(t *testing.T) {
 		t.Fatalf("fsf(1): %v", err)
 	}
 	diagRead(t, f, "C5 чтение b2")
+	// Позади позиции одна метка (FM1) — BSFM(2) просит две: over-space.
 	diagStep(t, f, "C5 BSFM(2) после чтения", diagBSFM, 2)
-	diagRead(t, f, "C5 (ожидание b3=0x33)")
+	diagRead(t, f, "C5 (over-space: EIO + BOT, чтение даёт b1=0x11)")
 
-	// С6: BSFM(99) — за пределы доступных меток.
+	// С6: BSFM(99) — over-space за пределы доступных меток.
 	toEOD()
 	diagStep(t, f, "C6 BSFM(99) из EOD", diagBSFM, 99)
 
