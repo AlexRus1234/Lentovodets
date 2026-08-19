@@ -18,11 +18,13 @@ package web_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"lentovodec/internal/iface/web"
+	"lentovodec/internal/port"
 	"lentovodec/internal/testutil"
 )
 
@@ -87,6 +89,7 @@ func TestFSList_ErrorMapping(t *testing.T) {
 	}{
 		{path: "/missing", code: "not_found", status: http.StatusNotFound},
 		{path: "/data/file.txt", code: "bad_request", status: http.StatusBadRequest},
+		{path: "data/file.txt", code: "bad_request", status: http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -105,6 +108,48 @@ func TestFSList_ErrorMapping(t *testing.T) {
 				t.Errorf("response = %d/%q, want %d/%q", resp.StatusCode, body.Code, tc.status, tc.code)
 			}
 		})
+	}
+}
+
+func TestFSList_MapsPermissionError(t *testing.T) {
+	env := newEnv(t, func(deps *web.Deps, _ *testEnv) {
+		deps.FS = permissionFS{MapFS: testMapFS()}
+	})
+	resp, err := http.Get(env.srv.URL + "/api/fs/list?path=/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+type permissionFS struct{ *testutil.MapFS }
+
+func (permissionFS) ReadDir(string) ([]port.DirEntry, error) { return nil, fs.ErrPermission }
+
+var _ port.Filesystem = permissionFS{}
+
+func TestFSList_ZeroModTimeIsZero(t *testing.T) {
+	env := newEnv(t, func(deps *web.Deps, _ *testEnv) {
+		deps.FS = testutil.NewMapFS(map[string]string{"/zero.txt": "x"})
+	})
+	resp, err := http.Get(env.srv.URL + "/api/fs/list?path=/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Entries []struct {
+			MTime int64 `json:"mtime"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Entries) != 1 || body.Entries[0].MTime != 0 {
+		t.Errorf("entries = %+v, want mtime 0", body.Entries)
 	}
 }
 

@@ -143,6 +143,7 @@ const ru: Record<string, string> = {
   'browser.search': 'Фильтр',
   'browser.empty': 'Каталог пуст',
   'browser.select': 'Выбрать',
+  'browser.selectCurrent': 'Выбрать этот каталог',
   'browser.selected': 'Выбрано: {n}',
 }
 
@@ -257,6 +258,7 @@ const en: Record<string, string> = {
   'browser.search': 'Filter',
   'browser.empty': 'Directory is empty',
   'browser.select': 'Select',
+  'browser.selectCurrent': 'Select this directory',
   'browser.selected': 'Selected: {n}',
 }
 

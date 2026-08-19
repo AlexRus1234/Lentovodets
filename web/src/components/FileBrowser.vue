@@ -74,8 +74,9 @@ async function load(path: string): Promise<void> {
 }
 
 function toggle(entry: FsEntry): void {
-  const path = childPath(entry.name)
-  if (!props.multiple) {
+	const path = childPath(entry.name)
+	if (!props.multiple && !entry.is_dir) return
+	if (!props.multiple) {
     selected.value = new Set([path])
     return
   }
@@ -83,6 +84,10 @@ function toggle(entry: FsEntry): void {
   if (next.has(path)) next.delete(path)
   else next.add(path)
   selected.value = next
+}
+
+function selectCurrent(): void {
+  if (!props.multiple) selected.value = new Set([cwd.value])
 }
 
 function isSelected(entry: FsEntry): boolean {
@@ -121,25 +126,28 @@ onMounted(() => void load('/'))
       <p v-if="error" class="error">{{ error }}</p>
       <p v-else-if="loading" class="dim">…</p>
       <div v-else class="browser-list">
-        <button
+        <div
           v-for="entry in visibleEntries"
           :key="entry.name"
-          type="button"
           class="browser-entry"
+          role="button"
+          tabindex="0"
           :class="{ selected: isSelected(entry) }"
           @dblclick="entry.is_dir ? void load(childPath(entry.name)) : undefined"
           @click="toggle(entry)"
+          @keydown.enter="toggle(entry)"
         >
-          <input :checked="isSelected(entry)" type="checkbox" tabindex="-1" />
+          <input :checked="isSelected(entry)" :disabled="!props.multiple && !entry.is_dir" type="checkbox" tabindex="-1" />
           <span class="mono">{{ entry.name }}{{ entry.is_dir ? '/' : '' }}</span>
           <span class="spacer" />
           <span class="dim">{{ entry.is_dir ? '' : entry.size }}</span>
-        </button>
+        </div>
         <p v-if="visibleEntries.length === 0" class="dim">{{ t('browser.empty') }}</p>
       </div>
       <div class="row">
         <span class="dim">{{ t('browser.selected', { n: selected.size }) }}</span>
         <span class="spacer" />
+        <button v-if="!props.multiple" type="button" @click="selectCurrent">{{ t('browser.selectCurrent') }}</button>
         <button type="button" :disabled="selected.size === 0" @click="submit">{{ t('browser.select') }}</button>
         <button type="button" @click="emit('close')">{{ t('cancel') }}</button>
       </div>

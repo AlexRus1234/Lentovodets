@@ -24,7 +24,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
-	"syscall"
+	"strings"
 )
 
 type fsEntryJSON struct {
@@ -47,10 +47,14 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	if requested == "" {
 		requested = "/"
 	}
+	if !path.IsAbs(requested) {
+		writeErr(w, http.StatusBadRequest, "путь должен быть абсолютным", "bad_request")
+		return
+	}
 	entries, err := s.deps.FS.ReadDir(requested)
 	if err != nil {
-		// Some Filesystem implementations report a file passed to ReadDir
-		// with a platform-specific error. Stat gives the API a stable 400.
+		// Некоторые реализации Filesystem сообщают о файле вместо каталога
+		// с платформенной ошибкой. Stat даёт API стабильный ответ 400.
 		if info, statErr := s.deps.FS.Stat(requested); statErr == nil && !info.IsDir() {
 			writeErr(w, http.StatusBadRequest, err.Error(), "bad_request")
 			return
@@ -69,9 +73,13 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]fsEntryJSON, 0, len(entries))
 	for _, entry := range entries {
+		mtime := int64(0)
+		if !entry.ModTime.IsZero() {
+			mtime = entry.ModTime.UnixNano()
+		}
 		out = append(out, fsEntryJSON{
 			Name: entry.Name, IsDir: entry.IsDir, Size: entry.Size,
-			ModTime: entry.ModTime.UnixNano(),
+			ModTime: mtime,
 		})
 	}
 	writeJSON(w, http.StatusOK, fsListJSON{Path: clean, Parent: parent, Entries: out})
@@ -83,7 +91,7 @@ func fsErrorResponse(err error) (int, string) {
 		return http.StatusNotFound, "not_found"
 	case errors.Is(err, fs.ErrPermission):
 		return http.StatusForbidden, "forbidden"
-	case errors.Is(err, syscall.ENOTDIR), errors.Is(err, fs.ErrInvalid):
+	case errors.Is(err, fs.ErrInvalid), strings.Contains(err.Error(), "not a directory"):
 		return http.StatusBadRequest, "bad_request"
 	default:
 		return http.StatusInternalServerError, "internal"
