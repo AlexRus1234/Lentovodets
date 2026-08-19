@@ -137,7 +137,8 @@ func (s *Scanner) scanEntry(
 		return domain.FileMeta{}, false, false, err
 	}
 	prev, existed := snapshot[p]
-	if existed && prev.Size == cur.Size && prev.ModTime == cur.ModTime {
+	if existed && prev.Size == cur.Size && prev.ModTime == cur.ModTime &&
+		prev.Type == cur.Type && prev.Linkname == cur.Linkname {
 		return domain.FileMeta{}, false, false, nil
 	}
 	if existed {

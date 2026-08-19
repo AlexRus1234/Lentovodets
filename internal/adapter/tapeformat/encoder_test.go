@@ -17,6 +17,8 @@
 package tapeformat_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -58,6 +60,15 @@ func TestWriteSession_Structure(t *testing.T) {
 	}
 	if last.Phase != port.PhaseWrite {
 		t.Errorf("phase = %q, want write", last.Phase)
+	}
+	blocks, _ := tape.Snapshot()
+	tr := tar.NewReader(bytes.NewReader(blocks[1]))
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatalf("чтение заголовка каталога: %v", err)
+	}
+	if hdr.Typeflag != tar.TypeDir || hdr.Mode != 0o755 {
+		t.Fatalf("режим каталога = %#o, want 0755", hdr.Mode)
 	}
 }
 

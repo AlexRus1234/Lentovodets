@@ -58,6 +58,11 @@ func (f *FS) Walk(ctx context.Context, root string, fn func(path string, info po
 type entry struct{ fs.FileInfo }
 
 func (e entry) LinkID() string { return linkID(e.FileInfo) }
+
+// linkID stays reflection-based so the adapter keeps compiling on Windows and
+// other platforms with different FileInfo.Sys layouts. Linux production walks
+// still expose Dev/Ino; Windows development falls back to an empty ID when the
+// platform does not expose a compatible file index.
 func linkID(info fs.FileInfo) string {
 	sys := info.Sys()
 	if sys == nil {

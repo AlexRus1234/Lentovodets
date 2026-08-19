@@ -247,14 +247,14 @@ func TestMigrateV1ToV2_DefaultsAndRoundTripSpecialFields(t *testing.T) {
 	}
 	defer c.Close()
 	files, err := c.GetFilesBySession(context.Background(), 1)
-	if err != nil || len(files) != 1 || files[0].Type != domain.TypeReg || files[0].Linkname != "" {
+	if err != nil || len(files) != 1 || files[0].Type != domain.FileTypeRegular || files[0].Linkname != "" {
 		t.Fatalf("migrated old row = %+v, err=%v", files, err)
 	}
-	if err := c.SaveFiles(context.Background(), 1, []domain.FileMeta{{Path: "/sym", Type: domain.TypeSym, Linkname: "missing", Size: 7, State: domain.StateAdded}}); err != nil {
+	if err := c.SaveFiles(context.Background(), 1, []domain.FileMeta{{Path: "/sym", Type: domain.FileTypeSymlink, Linkname: "missing", Size: 7, State: domain.StateAdded}}); err != nil {
 		t.Fatal(err)
 	}
 	files, err = c.GetFilesBySession(context.Background(), 1)
-	if err != nil || len(files) != 2 || files[1].Type != domain.TypeSym || files[1].Linkname != "missing" {
+	if err != nil || len(files) != 2 || files[1].Type != domain.FileTypeSymlink || files[1].Linkname != "missing" {
 		t.Fatalf("special fields round-trip = %+v, err=%v", files, err)
 	}
 }

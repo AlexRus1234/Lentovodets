@@ -236,7 +236,9 @@ func (m *MapFS) Link(oldname, newname string) error {
 		return &fs.PathError{Op: "link", Path: oldname, Err: fs.ErrNotExist}
 	}
 	name := toFSName(newname)
-	m.MapFS[name] = old
+	copy := *old
+	copy.Data = append([]byte(nil), old.Data...)
+	m.MapFS[name] = &copy
 	m.ids[name] = m.ids[toFSName(oldname)]
 	return nil
 }

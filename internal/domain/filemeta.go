@@ -28,13 +28,6 @@ const (
 	FileTypeRegular  FileType = "reg"
 	FileTypeSymlink  FileType = "sym"
 	FileTypeHardlink FileType = "lnk"
-	// Short names are kept next to the wire values for callers constructing metadata.
-	TypeReg      = FileTypeRegular
-	TypeSym      = FileTypeSymlink
-	TypeLink     = FileTypeHardlink
-	FileTypeReg  = FileTypeRegular
-	FileTypeSym  = FileTypeSymlink
-	FileTypeLink = FileTypeHardlink
 )
 
 func (t FileType) Valid() bool {

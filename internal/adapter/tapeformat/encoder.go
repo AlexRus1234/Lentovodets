@@ -202,6 +202,7 @@ func writeTarFile(
 	case fm.IsDir:
 		hdr.Typeflag = tar.TypeDir
 		hdr.Size = 0
+		hdr.Mode = int64(info.Mode().Perm())
 	case fm.IsSymlink():
 		hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeSymlink, fm.Linkname, 0
 	case fm.IsHardlink():

@@ -415,7 +415,7 @@ func TestScan_SymlinkMtimeIsCompared(t *testing.T) {
 	m := testutil.NewMapFS(nil)
 	m.AddSymlink("/etc/link", "target")
 	m.MapFS["etc/link"].ModTime = time.Unix(2000, 0)
-	snap := []domain.FileMeta{{Path: "/etc/link", Type: domain.TypeSym, Linkname: "target", Size: 6, ModTime: time.Unix(1000, 0).UnixNano(), State: domain.StateAdded}}
+	snap := []domain.FileMeta{{Path: "/etc/link", Type: domain.FileTypeSymlink, Linkname: "target", Size: 6, ModTime: time.Unix(1000, 0).UnixNano(), State: domain.StateAdded}}
 	got, err := newScanner(m).Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeMirror, Paths: []string{"/etc"}}, snap)
 	if err != nil {
 		t.Fatal(err)

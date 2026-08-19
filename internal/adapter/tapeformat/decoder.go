@@ -151,7 +151,7 @@ func readTar(ctx context.Context, tape port.Tape, dest port.FileWriter, idx *Ses
 	for i := range idx.Files {
 		fm := &idx.Files[i]
 		byPath[fm.Path] = fm
-		if !fm.IsDeleted() {
+		if !fm.IsDeleted() && !fm.IsSymlink() && !fm.IsHardlink() && !fm.IsDir {
 			total += fm.Size
 		}
 	}

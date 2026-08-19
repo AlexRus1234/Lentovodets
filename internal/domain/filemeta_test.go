@@ -51,11 +51,11 @@ func TestFileMetaValidateSpecialTypes(t *testing.T) {
 	}{
 		{name: "old regular", meta: domain.FileMeta{Path: "/old"}},
 		{name: "regular linkname", meta: domain.FileMeta{Path: "/f", Linkname: "/target"}, wantErr: "regular file"},
-		{name: "symlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.TypeSym}, wantErr: "no linkname"},
-		{name: "hardlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.TypeLink}, wantErr: "no linkname"},
+		{name: "symlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.FileTypeSymlink}, wantErr: "no linkname"},
+		{name: "hardlink without target", meta: domain.FileMeta{Path: "/link", Type: domain.FileTypeHardlink}, wantErr: "no linkname"},
 		{name: "unknown type", meta: domain.FileMeta{Path: "/f", Type: "fifo"}, wantErr: "invalid type"},
-		{name: "symlink", meta: domain.FileMeta{Path: "/link", Type: domain.TypeSym, Linkname: "missing"}},
-		{name: "hardlink", meta: domain.FileMeta{Path: "/link", Type: domain.TypeLink, Linkname: "/first"}},
+		{name: "symlink", meta: domain.FileMeta{Path: "/link", Type: domain.FileTypeSymlink, Linkname: "missing"}},
+		{name: "hardlink", meta: domain.FileMeta{Path: "/link", Type: domain.FileTypeHardlink, Linkname: "/first"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

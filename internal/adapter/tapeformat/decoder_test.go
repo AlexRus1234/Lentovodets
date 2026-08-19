@@ -79,8 +79,8 @@ func TestReadSession_SpecialFilesRoundTrip(t *testing.T) {
 	src.AddSymlink("/data/dangling", "missing-target")
 	idx := tapeformat.SessionIndex{FormatVersion: domain.FormatVersion, SessionNum: 1, Type: domain.SessionFull, JobRunID: "run", Timestamp: 1, JobName: "j", Files: []domain.FileMeta{
 		{Path: "/data/first", Size: 7, Hash: hashOf("payload"), State: domain.StateAdded},
-		{Path: "/data/second", Type: domain.TypeLink, Linkname: "/data/first", State: domain.StateAdded},
-		{Path: "/data/dangling", Type: domain.TypeSym, Linkname: "missing-target", Size: 14, State: domain.StateAdded},
+		{Path: "/data/second", Type: domain.FileTypeHardlink, Linkname: "/data/first", State: domain.StateAdded},
+		{Path: "/data/dangling", Type: domain.FileTypeSymlink, Linkname: "missing-target", Size: 14, State: domain.StateAdded},
 	}}
 	tape := testutil.NewFakeTape()
 	writeFixtureSession(t, tape, idx, src)
@@ -88,7 +88,8 @@ func TestReadSession_SpecialFilesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := testutil.NewMapFS(nil)
-	got, err := tapeformat.ReadSession(ctx, tape, dest, nil)
+	prog := &recProg{}
+	got, err := tapeformat.ReadSession(ctx, tape, dest, prog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +106,9 @@ func TestReadSession_SpecialFilesRoundTrip(t *testing.T) {
 	second, err := dest.Stat("/data/second")
 	if err != nil || second.IsDir() {
 		t.Fatalf("restored second: %v", err)
+	}
+	if len(prog.updates) == 0 || prog.updates[len(prog.updates)-1].TotalBytes != 7 {
+		t.Fatalf("special-file progress total = %d, want 7", prog.updates[len(prog.updates)-1].TotalBytes)
 	}
 }
 
