@@ -70,11 +70,19 @@ func TestCatalogFileCopies(t *testing.T) {
 		if err := env.cat.RegisterTape(context.Background(), "u1", "LTO-001", 1); err != nil {
 			t.Fatal(err)
 		}
-		id, err := env.cat.CreateSession(context.Background(), domain.Session{TapeUUID: "u1", Num: 2, Type: domain.SessionInc, Timestamp: 2, JobRunID: "run"})
+		ctx := context.Background()
+		first, err := env.cat.CreateSession(ctx, domain.Session{TapeUUID: "u1", Num: 1, Type: domain.SessionFull, Timestamp: 1, JobRunID: "run-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := env.cat.SaveFiles(context.Background(), id, []domain.FileMeta{{Path: "/a", Size: 3, State: domain.StateAdded, Hash: "hash"}}); err != nil {
+		second, err := env.cat.CreateSession(ctx, domain.Session{TapeUUID: "u1", Num: 2, Type: domain.SessionInc, Timestamp: 2, JobRunID: "run-2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := env.cat.SaveFiles(ctx, first, []domain.FileMeta{{Path: "/a", Size: 3, State: domain.StateAdded, Hash: "old"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := env.cat.SaveFiles(ctx, second, []domain.FileMeta{{Path: "/a", Size: 4, State: domain.StateModified, Hash: "new"}}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -82,7 +90,11 @@ func TestCatalogFileCopies(t *testing.T) {
 		t.Fatalf("empty path: %d", code)
 	}
 	code, body := do(t, env, http.MethodGet, "/api/catalog/file-copies?path=%2Fa", "")
-	if code != http.StatusOK || !strings.Contains(body, `"tape_name":"LTO-001"`) {
+	var response web.FileCopiesJSON
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		t.Fatal(err)
+	}
+	if code != http.StatusOK || len(response.Copies) != 2 || response.Copies[0].SessionNum != 2 || response.Copies[0].Hash != "new" || response.Copies[0].TapeName != "LTO-001" {
 		t.Fatalf("copies: %d %s", code, body)
 	}
 	code, body = do(t, env, http.MethodGet, "/api/catalog/file-copies?path=%2Fmissing", "")

@@ -163,7 +163,7 @@ func (s *Server) handleCatalogFileCopies(w http.ResponseWriter, r *http.Request)
 		writeErr(w, statusFor(err), err.Error(), "internal")
 		return
 	}
-	tapes, err := s.deps.Catalog.ListTapes(r.Context())
+	tapes, err := s.catUC().ListTapes(r.Context())
 	if err != nil {
 		writeErr(w, statusFor(err), err.Error(), "internal")
 		return

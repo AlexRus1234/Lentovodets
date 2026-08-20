@@ -308,7 +308,7 @@ export function listSessions(tape?: string): Promise<Session[]> {
 }
 
 export function getSessionFiles(id: number): Promise<FileEntry[]> {
-	return request('GET', `/catalog/sessions/${id}/files`)
+  return request('GET', `/catalog/sessions/${id}/files`)
 }
 
 export function getFileCopies(path: string): Promise<FileCopies> {

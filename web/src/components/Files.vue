@@ -115,6 +115,7 @@ async function toggleCopies(path: string): Promise<void> {
 }
 
 async function restoreCopy(copy: FileCopy): Promise<void> {
+  if (!window.confirm(t('files.restore.original.confirm'))) return
   restoreBusy.value = true
   actionError.value = ''
   try {
@@ -425,7 +426,7 @@ const sessionLabel = (s: Session): string =>
               <a v-if="row.isDir" class="dir mono" @click="enter(row.path)">{{ row.name }}/</a>
               <span v-else class="mono" :title="row.path">{{ row.name }}</span>
               <button v-if="!row.isDir" class="link-button" @click="toggleCopies(row.path)">
-                {{ t('files.copies', { n: expandedPath === row.path ? copies.length : '…' }) }}
+                {{ t('files.copies', { n: expandedPath === row.path && !copiesLoading ? copies.length : '…' }) }}
               </button>
             </td>
             <td>{{ row.isDir ? '—' : fmtBytes(row.size) }}</td>

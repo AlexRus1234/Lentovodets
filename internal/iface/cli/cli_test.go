@@ -463,6 +463,13 @@ func TestDaemonCommands_ViaClient(t *testing.T) {
 			t.Errorf("%v: вывод %q не содержит %q", tc.args, out, tc.want)
 		}
 	}
+	emptyClient := *client
+	emptyClient.copies = nil
+	e := newEnv(t, "", &emptyClient)
+	out, err := outOf(t, e, "catalog", "copies", "/missing")
+	if err != nil || !strings.Contains(out, "копий нет") {
+		t.Fatalf("пустой список копий: out=%q err=%v", out, err)
+	}
 }
 
 func TestCatalogSessions_PartSuffix(t *testing.T) {
