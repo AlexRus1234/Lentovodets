@@ -89,3 +89,14 @@ func TestTapeAlertName_Unknown(t *testing.T) {
 		t.Fatalf("unknown = %q, %v", name, critical)
 	}
 }
+
+func TestTapeAlertName_PowerConsumptionAndMaintenance(t *testing.T) {
+	name, critical := tapeAlertName(28)
+	if name != "power-consumption" || critical {
+		t.Fatalf("flag 28 = %q, %v", name, critical)
+	}
+	name, critical = tapeAlertName(29)
+	if name != "drive-maintenance" || critical {
+		t.Fatalf("flag 29 = %q, %v", name, critical)
+	}
+}

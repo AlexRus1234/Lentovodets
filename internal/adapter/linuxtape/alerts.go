@@ -164,6 +164,8 @@ func tapeAlertName(code int) (string, bool) {
 	case 27:
 		return "power-supply-failure", true
 	case 28:
+		return "power-consumption", false
+	case 29:
 		return "drive-maintenance", false
 	}
 	return fmt.Sprintf("alert-0x%02X", code), false
