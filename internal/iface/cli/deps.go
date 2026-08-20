@@ -48,6 +48,7 @@ type ServerClient interface {
 	ListSessions(ctx context.Context, tapeUUID string) ([]domain.Session, error)
 	SessionFiles(ctx context.Context, sessionID int64) ([]domain.FileMeta, error)
 	Search(ctx context.Context, pattern string) ([]port.FileCopy, error)
+	Copies(ctx context.Context, path string) ([]port.FileCopy, error)
 	DeleteSession(ctx context.Context, sessionID int64) error
 	Prune(ctx context.Context, days int64) (int64, error)
 }

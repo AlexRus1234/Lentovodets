@@ -76,6 +76,10 @@ func (c *fakeClient) Search(context.Context, string) ([]port.FileCopy, error) {
 	return c.copies, nil
 }
 
+func (c *fakeClient) Copies(context.Context, string) ([]port.FileCopy, error) {
+	return c.copies, nil
+}
+
 func (c *fakeClient) DeleteSession(context.Context, int64) error { return nil }
 
 func (c *fakeClient) Prune(context.Context, int64) (int64, error) { return c.pruned, nil }
@@ -434,11 +438,13 @@ func TestDaemonCommands_ViaClient(t *testing.T) {
 		{[]string{"catalog", "sessions", "--tape", "u1"}, "7", false},
 		{[]string{"catalog", "files", "--session", "7"}, "/data/a.txt", false},
 		{[]string{"catalog", "search", "a.txt"}, "сессия 7", false},
+		{[]string{"catalog", "copies", "/data/a.txt"}, "сессия 7", false},
 		{[]string{"catalog", "rm", "--session", "7"}, "удалена", false},
 		{[]string{"catalog", "prune", "--days", "30"}, "3", false},
 		{[]string{"catalog", "files"}, "", true},
 		{[]string{"catalog", "prune", "--days", "0"}, "", true},
 		{[]string{"catalog", "search"}, "", true},
+		{[]string{"catalog", "copies"}, "", true},
 	}
 	for _, tc := range cases {
 		e := newEnv(t, "", client)
@@ -456,6 +462,13 @@ func TestDaemonCommands_ViaClient(t *testing.T) {
 		if !strings.Contains(out, tc.want) {
 			t.Errorf("%v: вывод %q не содержит %q", tc.args, out, tc.want)
 		}
+	}
+	emptyClient := *client
+	emptyClient.copies = nil
+	e := newEnv(t, "", &emptyClient)
+	out, err := outOf(t, e, "catalog", "copies", "/missing")
+	if err != nil || !strings.Contains(out, "копий нет") {
+		t.Fatalf("пустой список копий: out=%q err=%v", out, err)
 	}
 }
 

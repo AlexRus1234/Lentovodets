@@ -119,7 +119,7 @@ CLI построены поверх него.
 | Метод | Путь | Описание |
 |---|---|---|
 | `POST` | `/api/backup/start?job=&full=&verify=` | Запустить бекап, вернуть `taskID`; `verify=true` — перечитать записанное со сверкой хешей (фаза `verify` в прогрессе) |
-| `POST` | `/api/restore/start?paths=&dest=&original=` | Запустить восстановление, вернуть `taskID` |
+| `POST` | `/api/restore/start?paths=&session_id=&dest=&original=` | Запустить восстановление; `session_id` выбирает конкретную сессию |
 | `GET` | `/api/tasks/active` | Список активных задач (включая ожидающие кассету) |
 | `GET` | `/api/tasks/{id}/progress` | Прогресс задачи (объект ниже) |
 | `POST` | `/api/tasks/{id}/continue` | Продолжить задачу в `awaiting_tape`: тело `{"tape_name": "..."}` (пустое/отсутствующее — предложенное имя); 409 — задача не в ожидании, 404 — задачи нет. Событие пишется в аудит-лог (`event=task_continue`, пользователь сессии или `api-key`) |
@@ -168,8 +168,19 @@ continue задача возвращается в `running`. Отменить о
 | `GET` | `/api/catalog/sessions?tape=` | Список сессий (фильтр по UUID кассеты); объект сессии включает `part` — номер части в цепочке spanning-запуска (обычная сессия — `1`) |
 | `GET` | `/api/catalog/sessions/{id}/files` | Файлы сессии |
 | `GET` | `/api/catalog/search?q=` | Поиск файлов по подстроке |
+| `GET` | `/api/catalog/file-copies?path=` | Все копии точного пути, новые сверху |
 | `DELETE` | `/api/catalog/sessions/{id}` | Удалить сессию из каталога |
 | `POST` | `/api/catalog/prune?days=` | Удалить сессии старше N дней |
+
+Ответ `file-copies` имеет вид:
+
+```json
+{"path":"/tank/data/a.txt","copies":[{"path":"/tank/data/a.txt","session_id":7,"session_num":2,"tape_uuid":"uuid","tape_name":"LTO-002","timestamp":1700000000,"size":12,"mod_time":0,"hash":"0123456789abcdef","state":"M","is_dir":false}]}
+```
+
+Пустой `path` даёт `400 bad_request`; неизвестный путь возвращает `200` с пустым `copies`. Запрос требует аутентификацию.
+
+Для `POST /api/restore/start` параметр `session_id` включает selective-восстановление из этой сессии. Если `session_id` задан без `paths`, восстанавливаются все записи выбранной сессии; с `paths` — только указанные пути.
 
 ### Статические ассеты
 

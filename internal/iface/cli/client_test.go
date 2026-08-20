@@ -76,6 +76,9 @@ func newFakeAPIServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /api/catalog/search", withKey(func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, http.StatusOK, `[{"path":"/a","size":1,"mod_time":0,"is_dir":false,"hash":"h","state":"A","session_id":7,"session_num":1,"tape_uuid":"u1","timestamp":1}]`)
 	}))
+	mux.HandleFunc("GET /api/catalog/file-copies", withKey(func(w http.ResponseWriter, _ *http.Request) {
+		reply(w, http.StatusOK, `{"path":"/a","copies":[]}`)
+	}))
 	mux.HandleFunc("DELETE /api/catalog/sessions/7", withKey(func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, http.StatusOK, `{"status":"ok"}`)
 	}))
@@ -118,6 +121,10 @@ func TestHTTPClient_APIKeyAuth(t *testing.T) {
 	copies, err := c.Search(ctx, "a")
 	if err != nil || len(copies) != 1 || copies[0].SessionNum != 1 {
 		t.Fatalf("Search: %v %v", err, copies)
+	}
+	copies, err = c.Copies(ctx, "/a")
+	if err != nil || len(copies) != 0 {
+		t.Fatalf("Copies: %v %v", err, copies)
 	}
 	if err := c.DeleteSession(ctx, 7); err != nil {
 		t.Fatalf("DeleteSession: %v", err)

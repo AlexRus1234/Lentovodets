@@ -61,7 +61,13 @@ type FileCopyJSON struct {
 	SessionID  int64  `json:"session_id"`
 	SessionNum int32  `json:"session_num"`
 	TapeUUID   string `json:"tape_uuid"`
+	TapeName   string `json:"tape_name"`
 	Timestamp  int64  `json:"timestamp"`
+}
+
+type FileCopiesJSON struct {
+	Path   string         `json:"path"`
+	Copies []FileCopyJSON `json:"copies"`
 }
 
 // catUC — каталожный use case без ленты (для запросов к БД).
@@ -143,6 +149,41 @@ func (s *Server) handleCatalogSearch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleCatalogFileCopies — GET /api/catalog/file-copies?path=.
+func (s *Server) handleCatalogFileCopies(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeErr(w, http.StatusBadRequest, "параметр path обязателен", "bad_request")
+		return
+	}
+	copies, err := s.catUC().Copies(r.Context(), path)
+	if err != nil {
+		writeErr(w, statusFor(err), err.Error(), "internal")
+		return
+	}
+	tapes, err := s.catUC().ListTapes(r.Context())
+	if err != nil {
+		writeErr(w, statusFor(err), err.Error(), "internal")
+		return
+	}
+	names := make(map[string]string, len(tapes))
+	for _, tape := range tapes {
+		names[tape.UUID] = tape.Name
+	}
+	out := make([]FileCopyJSON, 0, len(copies))
+	for _, cp := range copies {
+		out = append(out, FileCopyJSON{
+			FileJSON:   fileToJSON(cp.Meta),
+			SessionID:  cp.SessionID,
+			SessionNum: cp.SessionNum,
+			TapeUUID:   cp.TapeUUID,
+			TapeName:   names[cp.TapeUUID],
+			Timestamp:  cp.Timestamp,
+		})
+	}
+	writeJSON(w, http.StatusOK, FileCopiesJSON{Path: path, Copies: out})
 }
 
 // handleSessionDelete — DELETE /api/catalog/sessions/{id}.

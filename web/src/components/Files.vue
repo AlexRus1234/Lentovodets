@@ -26,9 +26,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   listSessions,
   getSessionFiles,
+  getFileCopies,
   startRestore,
   type Session,
   type FileEntry,
+  type FileCopy,
   ApiError,
 } from '../api'
 import { setTask } from '../task'
@@ -55,6 +57,9 @@ const restoreMode = ref<'safe' | 'original'>('safe')
 const restoreDest = ref('')
 const restoreBusy = ref(false)
 const browserOpen = ref(false)
+const expandedPath = ref('')
+const copies = ref<FileCopy[]>([])
+const copiesLoading = ref(false)
 
 // norm — единый вид пути для навигации: слэши, без хвостового '/'.
 function norm(p: string): string {
@@ -80,6 +85,8 @@ async function loadFiles(): Promise<void> {
   loadError.value = ''
   cwd.value = ''
   selected.value = new Set()
+  expandedPath.value = ''
+  copies.value = []
   try {
     files.value = await getSessionFiles(selectedId.value)
   } catch (e) {
@@ -87,6 +94,38 @@ async function loadFiles(): Promise<void> {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+}
+
+async function toggleCopies(path: string): Promise<void> {
+  if (expandedPath.value === path) {
+    expandedPath.value = ''
+    return
+  }
+  expandedPath.value = path
+  copiesLoading.value = true
+  try {
+    copies.value = (await getFileCopies(path)).copies
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+    copies.value = []
+  } finally {
+    copiesLoading.value = false
+  }
+}
+
+async function restoreCopy(copy: FileCopy): Promise<void> {
+  if (!window.confirm(t('files.restore.original.confirm'))) return
+  restoreBusy.value = true
+  actionError.value = ''
+  try {
+    const resp = await startRestore({ sessionId: copy.session_id, paths: [copy.path], original: true })
+    setTask(resp.task_id, 'restore', `№${copy.session_num} (${copy.path})`)
+    expandedPath.value = ''
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    restoreBusy.value = false
   }
 }
 
@@ -372,7 +411,8 @@ const sessionLabel = (s: Session): string =>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in rows" :key="row.path" :class="{ deleted: row.state === 'D' }">
+          <template v-for="row in rows" :key="row.path">
+          <tr :class="{ deleted: row.state === 'D' }">
             <td class="w-check">
               <input
                 v-if="selectable(row) && (row.isDir ? dirHasFiles(row) : true)"
@@ -385,6 +425,9 @@ const sessionLabel = (s: Session): string =>
             <td>
               <a v-if="row.isDir" class="dir mono" @click="enter(row.path)">{{ row.name }}/</a>
               <span v-else class="mono" :title="row.path">{{ row.name }}</span>
+              <button v-if="!row.isDir" class="link-button" @click="toggleCopies(row.path)">
+                {{ t('files.copies', { n: expandedPath === row.path && !copiesLoading ? copies.length : '…' }) }}
+              </button>
             </td>
             <td>{{ row.isDir ? '—' : fmtBytes(row.size) }}</td>
             <td>{{ row.isDir ? '—' : fmtNanos(row.modTime) }}</td>
@@ -392,8 +435,26 @@ const sessionLabel = (s: Session): string =>
               <span class="badge" :data-state="row.state">
                 {{ t(`files.state.${row.state}`) }}
               </span>
+           </td>
+          </tr>
+          <tr v-if="expandedPath === row.path" :key="`${row.path}-copies`">
+            <td colspan="5" class="copies-cell">
+              <span v-if="copiesLoading" class="dim">…</span>
+              <span v-else-if="copies.length === 0" class="dim">{{ t('files.copies.empty') }}</span>
+              <table v-else class="copies-table">
+                <thead><tr><th>{{ t('files.copies.date') }}</th><th>{{ t('files.copies.tape') }}</th><th>{{ t('files.copies.session') }}</th><th>{{ t('files.size') }}</th><th>{{ t('files.copies.hash') }}</th><th /></tr></thead>
+                <tbody><tr v-for="copy in copies" :key="copy.session_id">
+                  <td>{{ new Date(copy.timestamp * 1000).toLocaleString() }}</td>
+                  <td>{{ copy.tape_name || copy.tape_uuid.slice(0, 8) }}</td>
+                  <td>#{{ copy.session_num }}</td>
+                  <td>{{ fmtBytes(copy.size) }}</td>
+                  <td class="mono">{{ copy.hash.slice(0, 12) }}</td>
+                  <td><button :disabled="restoreBusy" @click="restoreCopy(copy)">{{ t('files.copies.restore') }}</button></td>
+                </tr></tbody>
+              </table>
             </td>
           </tr>
+          </template>
         </tbody>
       </table>
 
@@ -527,5 +588,22 @@ tr.deleted td {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+.link-button {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.copies-cell {
+  padding: 0.5rem 1rem;
+  background: var(--panel-alt);
+}
+.copies-table {
+  width: 100%;
+  font-size: 0.85rem;
 }
 </style>

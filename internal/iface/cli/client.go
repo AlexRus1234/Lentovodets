@@ -143,6 +143,25 @@ func (c *HTTPClient) Search(ctx context.Context, pattern string) ([]port.FileCop
 	return out, nil
 }
 
+// Copies — GET /api/catalog/file-copies?path=.
+func (c *HTTPClient) Copies(ctx context.Context, path string) ([]port.FileCopy, error) {
+	var resp web.FileCopiesJSON
+	if err := c.get(ctx, "/api/catalog/file-copies?path="+url.QueryEscape(path), &resp); err != nil {
+		return nil, err
+	}
+	out := make([]port.FileCopy, 0, len(resp.Copies))
+	for _, cp := range resp.Copies {
+		out = append(out, port.FileCopy{
+			Meta:       fileFromJSON(cp.FileJSON),
+			SessionID:  cp.SessionID,
+			SessionNum: cp.SessionNum,
+			TapeUUID:   cp.TapeUUID,
+			Timestamp:  cp.Timestamp,
+		})
+	}
+	return out, nil
+}
+
 // DeleteSession — DELETE /api/catalog/sessions/{id}.
 func (c *HTTPClient) DeleteSession(ctx context.Context, sessionID int64) error {
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/catalog/sessions/%d", sessionID), nil, nil)

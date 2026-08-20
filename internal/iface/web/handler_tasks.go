@@ -24,6 +24,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -78,13 +79,22 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, taskIDResponse{TaskID: id})
 }
 
-// handleRestoreStart — POST /api/restore/start?paths=&dest=&original=.
+// handleRestoreStart — POST /api/restore/start?paths=&session_id=&dest=&original=.
 //
 // paths (через запятую) → smart-восстановление этих путей; без paths —
 // полное восстановление ленты. dest — каталог-назначение; original
 // восстанавливает по исходным путям из индекса (dest игнорируется).
 func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	sessionID := int64(0)
+	if raw := q.Get("session_id"); raw != "" {
+		var err error
+		sessionID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || sessionID <= 0 {
+			writeErr(w, http.StatusBadRequest, "параметр session_id должен быть положительным числом", "bad_request")
+			return
+		}
+	}
 	dest := q.Get("dest")
 	if isTruthy(q.Get("original")) {
 		dest = ""
@@ -112,7 +122,9 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 		}
 		uc := restore.New(tape, s.deps.Codec, s.deps.Catalog, fs,
 			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
-		if len(paths) > 0 {
+		if sessionID > 0 {
+			_, err = uc.Selective(s.ctx, sessionID, paths)
+		} else if len(paths) > 0 {
 			_, err = uc.Smart(s.ctx, paths)
 		} else {
 			_, err = uc.Full(s.ctx)
@@ -126,7 +138,7 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deps.Log.Info("restore task started",
-		"paths", len(paths), "dest", dest, "user", requestUser(r), "event", "task")
+		"paths", len(paths), "session_id", sessionID, "dest", dest, "user", requestUser(r), "event", "task")
 	writeJSON(w, http.StatusAccepted, taskIDResponse{TaskID: id})
 }
 

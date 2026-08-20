@@ -97,7 +97,13 @@ export interface FileCopy extends FileEntry {
   session_id: number
   session_num: number
   tape_uuid: string
+  tape_name: string
   timestamp: number
+}
+
+export interface FileCopies {
+  path: string
+  copies: FileCopy[]
 }
 
 export interface FsEntry {
@@ -268,12 +274,14 @@ export function startBackup(job: string, full: boolean): Promise<{ task_id: stri
 
 export function startRestore(opts: {
   paths?: string[]
+  sessionId?: number
   dest?: string
   original?: boolean
 }): Promise<{ task_id: string }> {
   return request('POST', '/restore/start', {
     query: {
       paths: opts.paths && opts.paths.length > 0 ? opts.paths.join(',') : undefined,
+      session_id: opts.sessionId,
       dest: opts.original ? undefined : opts.dest,
       original: opts.original ? 'true' : undefined,
     },
@@ -301,6 +309,10 @@ export function listSessions(tape?: string): Promise<Session[]> {
 
 export function getSessionFiles(id: number): Promise<FileEntry[]> {
   return request('GET', `/catalog/sessions/${id}/files`)
+}
+
+export function getFileCopies(path: string): Promise<FileCopies> {
+  return request('GET', '/catalog/file-copies', { query: { path } })
 }
 
 export function deleteSession(id: number): Promise<void> {
