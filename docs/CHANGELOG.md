@@ -27,6 +27,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ### Added
 
+- История копий файла в Web UI и через `GET /api/catalog/file-copies?path=`;
+  каждая версия показывает дату, кассету, сессию, размер и хеш и может быть
+  восстановлена выборочно. Добавлена CLI-команда `catalog copies <path>`.
+
 - Верификация после записи (verify-after-write): `--verify` у `backup`
   (CLI) и `verify=true` у `POST /api/backup/start` — только что
   записанные сессии перечитываются сразу после записи, xxhash каждого

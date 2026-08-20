@@ -508,7 +508,7 @@ task_running`; привод без кассеты (ENOMEDIUM) — `409 no_medium
 | Метод | Путь                          | Описание                                  |
 | ----- | ----------------------------- | ----------------------------------------- |
 | POST  | `/backup/start?job=&full=&verify=` | запустить бекап, вернуть `taskID` (`verify=true` — верификация после записи) |
-| POST  | `/restore/start?paths=&dest=&original=` | запустить restore, вернуть `taskID` |
+| POST  | `/restore/start?paths=&session_id=&dest=&original=` | запустить restore, вернуть `taskID`; `session_id` выбирает selective-восстановление |
 | GET   | `/tasks/active`               | список активных задач                     |
 | GET   | `/tasks/{id}/progress`        | прогресс (текущий файл, %, скорость, лог) |
 | POST  | `/tasks/{id}/continue`        | продолжить задачу в `awaiting_tape` (смена кассеты spanning): тело `{"tape_name": "..."}`, пустое — предложенное; 409 не в ожидании, 404 нет задачи; аудит `event=task_continue` |
@@ -549,6 +549,7 @@ cancel-эндпоинт не вводится: отмена ожидающей �
 | GET   | `/catalog/sessions?tape=`             |                                     |
 | GET   | `/catalog/sessions/{id}/files`        |                                     |
 | GET   | `/catalog/search?q=`                  |                                     |
+| GET   | `/catalog/file-copies?path=`          | все копии пути, новые сверху         |
 | DELETE| `/catalog/sessions/{id}`              | удалить сессию                      |
 | POST  | `/catalog/prune?days=`                | почистить старые                    |
 

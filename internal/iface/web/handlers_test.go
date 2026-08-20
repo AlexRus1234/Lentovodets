@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"lentovodec/internal/domain"
+	"lentovodec/internal/iface/web"
 )
 
 // do выполняет запрос к серверу окружения и возвращает статус и тело.
@@ -61,6 +62,32 @@ func TestStatus(t *testing.T) {
 	}
 	if resp["version"] != "test" || resp["tape"] != true {
 		t.Errorf("status = %v", resp)
+	}
+}
+
+func TestCatalogFileCopies(t *testing.T) {
+	env := newEnv(t, func(_ *web.Deps, env *testEnv) {
+		if err := env.cat.RegisterTape(context.Background(), "u1", "LTO-001", 1); err != nil {
+			t.Fatal(err)
+		}
+		id, err := env.cat.CreateSession(context.Background(), domain.Session{TapeUUID: "u1", Num: 2, Type: domain.SessionInc, Timestamp: 2, JobRunID: "run"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := env.cat.SaveFiles(context.Background(), id, []domain.FileMeta{{Path: "/a", Size: 3, State: domain.StateAdded, Hash: "hash"}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if code, _ := do(t, env, http.MethodGet, "/api/catalog/file-copies", ""); code != http.StatusBadRequest {
+		t.Fatalf("empty path: %d", code)
+	}
+	code, body := do(t, env, http.MethodGet, "/api/catalog/file-copies?path=%2Fa", "")
+	if code != http.StatusOK || !strings.Contains(body, `"tape_name":"LTO-001"`) {
+		t.Fatalf("copies: %d %s", code, body)
+	}
+	code, body = do(t, env, http.MethodGet, "/api/catalog/file-copies?path=%2Fmissing", "")
+	if code != http.StatusOK || !strings.Contains(body, `"copies":[]`) {
+		t.Fatalf("missing: %d %s", code, body)
 	}
 }
 

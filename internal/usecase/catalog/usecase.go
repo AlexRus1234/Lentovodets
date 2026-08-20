@@ -95,6 +95,15 @@ func (uc *UseCase) Search(ctx context.Context, pattern string) ([]port.FileCopy,
 	return copies, nil
 }
 
+// Copies — все копии точного пути, от новых к старым.
+func (uc *UseCase) Copies(ctx context.Context, path string) ([]port.FileCopy, error) {
+	copies, err := uc.cat.GetAllFileCopies(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: копии %q: %w", path, err)
+	}
+	return copies, nil
+}
+
 // DeleteSession удаляет сессию из каталога (данные на ленте остаются).
 func (uc *UseCase) DeleteSession(ctx context.Context, sessionID int64) error {
 	if err := uc.cat.DeleteSession(ctx, sessionID); err != nil {

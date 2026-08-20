@@ -220,6 +220,7 @@ lentovodec jobs add media --paths /tank/data/media --span-depth 1
 | `lentovodec catalog sessions [--tape UUID]` | Список сессий (с фильтром по кассете); у частей spanning-цепочек — суффикс `part N` |
 | `lentovodec catalog files --session N` | Файлы сессии |
 | `lentovodec catalog search <pattern>` | Поиск файлов по подстроке |
+| `lentovodec catalog copies <path>` | Все копии точного пути, новые сверху |
 | `lentovodec catalog rm --session N` | Удалить сессию из каталога (данные на ленте остаются) |
 | `lentovodec catalog prune --days N` | Удалить сессии старше N дней |
 

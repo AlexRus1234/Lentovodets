@@ -43,11 +43,40 @@ func newCatalogCmd(deps Deps, flags *globalFlags) *cobra.Command {
 		newCatalogSessionsCmd(deps, flags),
 		newCatalogFilesCmd(deps, flags),
 		newCatalogSearchCmd(deps, flags),
+		newCatalogCopiesCmd(deps, flags),
 		newCatalogRmCmd(deps, flags),
 		newCatalogPruneCmd(deps, flags),
 		newCatalogRebuildCmd(deps, flags),
 	)
 	return cmd
+}
+
+// newCatalogCopiesCmd — `catalog copies <path>`.
+func newCatalogCopiesCmd(deps Deps, flags *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "copies <path>",
+		Short: "Показать все копии пути",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			rt, err := openRuntime(deps, flags)
+			if err != nil {
+				return err
+			}
+			copies, err := rt.dial().Copies(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			for _, cp := range copies {
+				rt.printf("сессия %d (#%d, %s, %s): %s\n",
+					cp.SessionID, cp.SessionNum, cp.TapeUUID,
+					time.Unix(cp.Timestamp, 0).UTC().Format(time.RFC3339), cp.Meta.Path)
+			}
+			if len(copies) == 0 {
+				rt.printf("копий нет\n")
+			}
+			return nil
+		},
+	}
 }
 
 // newCatalogTapesCmd — `catalog tapes`.

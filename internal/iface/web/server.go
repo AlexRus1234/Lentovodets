@@ -173,6 +173,7 @@ func (s *Server) buildRouter() chi.Router {
 			r.Get("/catalog/sessions", s.handleCatalogSessions)
 			r.Get("/catalog/sessions/{id}/files", s.handleSessionFiles)
 			r.Get("/catalog/search", s.handleCatalogSearch)
+			r.Get("/catalog/file-copies", s.handleCatalogFileCopies)
 			r.Delete("/catalog/sessions/{id}", s.handleSessionDelete)
 			r.Post("/catalog/prune", s.handleCatalogPrune)
 		})
