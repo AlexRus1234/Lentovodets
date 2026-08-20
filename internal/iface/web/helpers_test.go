@@ -19,6 +19,7 @@
 package web_test
 
 import (
+	"context"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -149,6 +150,15 @@ type testEnv struct {
 	clock  *stepClock
 	codec  *testutil.FakeCodec
 	server *web.Server
+}
+
+type diagnosticTape struct {
+	*testutil.FakeTape
+	alerts []domain.TapeAlert
+}
+
+func (t *diagnosticTape) TapeAlerts(context.Context) ([]domain.TapeAlert, error) {
+	return t.alerts, nil
 }
 
 // newEnv собирает демона на двойниках; mutate настраивает Deps до сборки.

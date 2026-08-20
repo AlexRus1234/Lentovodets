@@ -72,7 +72,7 @@ type TapeInfo struct {
 
 // TapeAlert — активный флаг диагностики привода по стандарту TapeAlert.
 type TapeAlert struct {
-	Name     string
-	Code     int
-	Critical bool
+	Name     string `json:"name"`
+	Code     int    `json:"code"`
+	Critical bool   `json:"critical"`
 }

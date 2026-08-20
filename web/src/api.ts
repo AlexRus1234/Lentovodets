@@ -42,7 +42,7 @@ export interface TapeLabel {
 export interface TapeInfo {
   label: TapeLabel
   filemark: number
-  alerts: TapeAlert[]
+  alerts?: TapeAlert[]
 }
 
 export interface TapeAlert {

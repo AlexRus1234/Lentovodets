@@ -146,6 +146,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ### Fixed
 
+- Исправлена нумерация TapeAlert-параметров `0x0800–0x083F` (`0x800` =
+  флаг 1), проверка активного бита значения и отображение низких флагов
+  (`READ FAILURE`, `WRITE FAILURE`, `HARD ERROR`, `MEDIA`, `WORM`). Добавлены
+  проверки SG_IO-статусов и безопасное удержание буферов ioctl.
+
 - Ярлык кассеты с некорректным `formatted_at` (не RFC-3339) больше не
   читается молча: валидация перенесена в `DecodeLabel` (доменный
   хелпер `TapeLabel.ParseFormattedAt`) — битый ярлык нашего формата

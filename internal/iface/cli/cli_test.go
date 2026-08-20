@@ -48,7 +48,7 @@ func (c *fakeClient) TapeInfo(context.Context) (domain.TapeInfo, error) {
 	return domain.TapeInfo{Label: domain.TapeLabel{
 		Magic: domain.Magic, FormatVersion: 2, Name: "T1", UUID: "u1",
 		FormattedAt: "2026-01-01T00:00:00Z",
-	}}, nil
+	}, Alerts: []domain.TapeAlert{{Name: "read-failure", Code: 1, Critical: true}}}, nil
 }
 
 func (c *fakeClient) Eject(context.Context) error { return nil }
@@ -431,7 +431,7 @@ func TestDaemonCommands_ViaClient(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{[]string{"tape", "info"}, "T1", false},
+		{[]string{"tape", "info"}, "read-failure", false},
 		{[]string{"tape", "eject"}, "извлечена", false},
 		{[]string{"catalog", "tapes"}, "T1", false},
 		{[]string{"catalog", "sessions"}, "u1", false},

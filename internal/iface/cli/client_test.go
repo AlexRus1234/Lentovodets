@@ -59,7 +59,7 @@ func newFakeAPIServer(t *testing.T) *httptest.Server {
 		}
 	}
 	mux.HandleFunc("GET /api/tape/info", withKey(func(w http.ResponseWriter, _ *http.Request) {
-		reply(w, http.StatusOK, `{"label":{"magic":"M","format_version":2,"name":"T1","uuid":"u1","formatted_at":"x"},"filemark":-1}`)
+		reply(w, http.StatusOK, `{"label":{"magic":"M","format_version":2,"name":"T1","uuid":"u1","formatted_at":"x"},"filemark":-1,"alerts":[{"name":"read-failure","code":1,"critical":true}]}`)
 	}))
 	mux.HandleFunc("POST /api/tape/eject", withKey(func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, http.StatusOK, `{"status":"ok"}`)
@@ -96,7 +96,7 @@ func TestHTTPClient_APIKeyAuth(t *testing.T) {
 	ctx := context.Background()
 
 	info, err := c.TapeInfo(ctx)
-	if err != nil || info.Label.Name != "T1" || info.Label.UUID != "u1" {
+	if err != nil || info.Label.Name != "T1" || info.Label.UUID != "u1" || len(info.Alerts) != 1 || info.Alerts[0].Code != 1 || !info.Alerts[0].Critical {
 		t.Fatalf("TapeInfo: %v %+v", err, info)
 	}
 	if err := c.Eject(ctx); err != nil {

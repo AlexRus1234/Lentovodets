@@ -31,6 +31,7 @@ import (
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/iface/web"
+	"lentovodec/internal/port"
 )
 
 // do выполняет запрос к серверу окружения и возвращает статус и тело.
@@ -180,6 +181,23 @@ func TestTapeInfo_BlankTape_409(t *testing.T) {
 	env := newEnv(t, nil) // лента пуста: ярлыка нет
 	if code, _ := do(t, env, http.MethodGet, "/api/tape/info", ""); code != http.StatusConflict {
 		t.Errorf("info на пустой ленте: %d, want 409", code)
+	}
+}
+
+func TestTapeInfo_WithAlerts(t *testing.T) {
+	env := newEnv(t, func(deps *web.Deps, e *testEnv) {
+		diagnostic := &diagnosticTape{
+			FakeTape: e.tape,
+			alerts:   []domain.TapeAlert{{Name: "read-failure", Code: 1, Critical: true}},
+		}
+		deps.OpenTape = func(string) (port.Tape, error) { return diagnostic, nil }
+	})
+	if code, _ := do(t, env, http.MethodPost, "/api/tape/format?name=LTO-ALERT", ""); code != http.StatusOK {
+		t.Fatalf("format: %d", code)
+	}
+	code, body := do(t, env, http.MethodGet, "/api/tape/info", "")
+	if code != http.StatusOK || !strings.Contains(body, `"name":"read-failure"`) || !strings.Contains(body, `"critical":true`) {
+		t.Fatalf("info with alerts: %d %q", code, body)
 	}
 }
 

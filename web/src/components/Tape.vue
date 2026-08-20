@@ -154,9 +154,9 @@ onMounted(() => {
        <dd>{{ info.filemark }}</dd>
        <dt>{{ t('tape.info.alerts') }}</dt>
        <dd>
-         <span v-if="info.alerts.length === 0" class="dim">{{ t('tape.info.alerts.none') }}</span>
+         <span v-if="(info.alerts ?? []).length === 0" class="dim">{{ t('tape.info.alerts.none') }}</span>
          <span
-           v-for="alert in info.alerts"
+           v-for="alert in info.alerts ?? []"
            :key="alert.code"
            class="alert-badge"
            :class="alert.critical ? 'critical' : 'warning'"

@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -75,6 +76,9 @@ func (t *Tape) TapeAlerts(ctx context.Context) ([]domain.TapeAlert, error) {
 	if err := sendSGIO(t.f.Fd(), &hdr); err != nil {
 		return nil, err
 	}
+	runtime.KeepAlive(cdb)
+	runtime.KeepAlive(sense)
+	runtime.KeepAlive(response)
 	return parseTapeAlertPage(response)
 }
 
@@ -83,8 +87,8 @@ func sendSGIO(fd uintptr, hdr *sgIOHeader) error {
 	if errno != 0 {
 		return fmt.Errorf("linuxtape: SG_IO LOG SENSE: %w", errno)
 	}
-	if hdr.status != 0 || hdr.maskedStatus != 0 || hdr.hostStatus != 0 {
-		return fmt.Errorf("linuxtape: SG_IO status=%d masked=%d host=%d", hdr.status, hdr.maskedStatus, hdr.hostStatus)
+	if hdr.status != 0 || hdr.maskedStatus != 0 || hdr.hostStatus != 0 || hdr.driverStatus != 0 {
+		return fmt.Errorf("linuxtape: SG_IO status=%d masked=%d host=%d driver=%d", hdr.status, hdr.maskedStatus, hdr.hostStatus, hdr.driverStatus)
 	}
 	return nil
 }
@@ -92,6 +96,9 @@ func sendSGIO(fd uintptr, hdr *sgIOHeader) error {
 func parseTapeAlertPage(data []byte) ([]domain.TapeAlert, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("linuxtape: TapeAlert response too short: %d", len(data))
+	}
+	if data[0]&0x3f != logSensePage {
+		return nil, fmt.Errorf("linuxtape: unexpected TapeAlert page 0x%02x", data[0]&0x3f)
 	}
 	length := int(binary.BigEndian.Uint16(data[2:4])) + 4
 	if length > len(data) {
@@ -102,19 +109,13 @@ func parseTapeAlertPage(data []byte) ([]domain.TapeAlert, error) {
 		if length-pos < 4 {
 			return nil, fmt.Errorf("linuxtape: truncated TapeAlert parameter header")
 		}
-		code := int(binary.BigEndian.Uint16(data[pos:pos+2])) - 0x800
+		code := int(binary.BigEndian.Uint16(data[pos:pos+2])) - 0x7ff
 		valueLen := int(data[pos+3])
 		pos += 4
 		if valueLen > length-pos {
 			return nil, fmt.Errorf("linuxtape: truncated TapeAlert parameter %d", code)
 		}
-		active := false
-		for _, b := range data[pos : pos+valueLen] {
-			if b != 0 {
-				active = true
-				break
-			}
-		}
+		active := valueLen > 0 && data[pos]&1 != 0
 		if active && code > 0 {
 			name, critical := tapeAlertName(code)
 			alerts = append(alerts, domain.TapeAlert{Name: name, Code: code, Critical: critical})
@@ -125,21 +126,45 @@ func parseTapeAlertPage(data []byte) ([]domain.TapeAlert, error) {
 }
 
 func tapeAlertName(code int) (string, bool) {
-	known := map[int]struct {
-		name     string
-		critical bool
-	}{
-		1: {"read-warning", false}, 2: {"read-failure", true},
-		3: {"write-warning", false}, 4: {"write-failure", true},
-		5: {"media-life", false}, 11: {"cleaning-media", false},
-		12: {"unsupported-format", true}, 20: {"clean-now", true},
-		21: {"clean-periodic", false}, 22: {"expired-cleaning-media", true},
-		23: {"invalid-cleaning-media", true}, 24: {"retension-requested", false},
-		25: {"dual-port-interface-error", true}, 26: {"cooling-fan-failure", true},
-		27: {"power-supply-failure", true}, 28: {"drive-maintenance", false},
-	}
-	if item, ok := known[code]; ok {
-		return item.name, item.critical
+	switch code {
+	case 1:
+		return "read-failure", true
+	case 2:
+		return "write-failure", true
+	case 3:
+		return "hard-error", true
+	case 4:
+		return "media", true
+	case 5:
+		return "write-protect-error", false
+	case 7:
+		return "media-life", false
+	case 8:
+		return "not-data-grade", true
+	case 9:
+		return "no-removal", false
+	case 10:
+		return "cleaning-media", false
+	case 12:
+		return "worm-cartridge", true
+	case 20:
+		return "clean-now", true
+	case 21:
+		return "cleaning-still-in-progress", false
+	case 22:
+		return "expired-cleaning-media", true
+	case 23:
+		return "invalid-cleaning-media", true
+	case 24:
+		return "retension-requested", false
+	case 25:
+		return "dual-port-interface-error", true
+	case 26:
+		return "cooling-fan-failure", true
+	case 27:
+		return "power-supply-failure", true
+	case 28:
+		return "drive-maintenance", false
 	}
 	return fmt.Sprintf("alert-0x%02X", code), false
 }
