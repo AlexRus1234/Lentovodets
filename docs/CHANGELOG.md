@@ -121,6 +121,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ### Fixed
 
+- Ярлык кассеты с некорректным `formatted_at` (не RFC-3339) больше не
+  читается молча: валидация перенесена в `DecodeLabel` (доменный
+  хелпер `TapeLabel.ParseFormattedAt`) — битый ярлык нашего формата
+  даёт честную ошибку у всех читателей (`tape info`, restore,
+  rebuild), а не только при реконструкции каталога. Также `TapeInfo`
+  сведён к общему `readLabel` (третий дубль чтения ярлыка убран).
 - Гонка доступа к стримеру в демоне: Web UI и API открывали `/dev/nst*`
   из нескольких мест без координации (probe статуса каждые 15 с, tape
   info/eject/format, фоновые задачи), а драйвер st допускает один

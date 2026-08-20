@@ -121,6 +121,16 @@ func TestDecodeLabel_Table(t *testing.T) {
 			},
 			wantErr: &domain.NewerFormatError{},
 		},
+		{
+			name: "наш magic, битый formatted_at",
+			block: func() []byte {
+				l := fixtureLabel()
+				l.FormattedAt = "not-a-time"
+				b, _ := json.Marshal(l)
+				return b
+			},
+			wantMsg: "formatted_at",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

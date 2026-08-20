@@ -42,7 +42,10 @@ func EncodeLabel(label domain.TapeLabel) ([]byte, error) {
 //   - все нули / пустой блок — *domain.BlankTapeError;
 //   - не-JSON или чужой magic — *domain.ForeignFormatError;
 //   - magic нашего семейства, но не текущий, либо format_version новее
-//     поддерживаемой — *domain.NewerFormatError.
+//     поддерживаемой — *domain.NewerFormatError;
+//   - некорректный formatted_at (не RFC-3339) — ошибка разбора: ярлык
+//     нашего формата битый, читателю (tape info, restore, rebuild)
+//     нужна честная ошибка, а не молчащее значение.
 func DecodeLabel(block []byte) (domain.TapeLabel, error) {
 	trimmed := trimZeros(block)
 	if len(trimmed) == 0 {
@@ -66,6 +69,9 @@ func DecodeLabel(block []byte) (domain.TapeLabel, error) {
 			Found:     label.FormatVersion,
 			Supported: domain.FormatVersion,
 		}
+	}
+	if _, err := label.ParseFormattedAt(); err != nil {
+		return domain.TapeLabel{}, fmt.Errorf("tapeformat: %w", err)
 	}
 	return label, nil
 }

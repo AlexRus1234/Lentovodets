@@ -78,7 +78,7 @@ func TestRebuild_FreshDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("родной каталог: %v", err)
 	}
-	if rep.Tapes != 1 || rep.TapeName != "LTO-001" ||
+	if rep.TapeName != "LTO-001" ||
 		rep.Sessions != len(native) || rep.SkippedSessions != 0 {
 		t.Fatalf("отчёт: %+v; сессий на ленте %d", rep, len(native))
 	}

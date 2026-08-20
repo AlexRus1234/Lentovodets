@@ -70,7 +70,7 @@ func TestCatalog_Rebuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rebuild: %v", err)
 	}
-	if rep.Tapes != 1 || rep.TapeName != "t-1" || rep.Sessions != 2 ||
+	if rep.TapeName != "t-1" || rep.Sessions != 2 ||
 		rep.Files != 3 || rep.SkippedSessions != 0 || rep.NextTapeName != "" {
 		t.Fatalf("отчёт: %+v", rep)
 	}

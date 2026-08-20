@@ -19,6 +19,11 @@
 
 package domain
 
+import (
+	"fmt"
+	"time"
+)
+
 // Константы двоичного формата ленты (канон — docs/FORMAT.md §2).
 const (
 	// Magic — строковая сигнатура в ярлыке ленты. Кассеты legacy
@@ -44,6 +49,18 @@ type TapeLabel struct {
 	Name          string `json:"name"`           // уникальное имя кассеты в каталоге
 	UUID          string `json:"uuid"`           // RFC-4122 v4, канонический lowercase
 	FormattedAt   string `json:"formatted_at"`   // RFC-3339, UTC
+}
+
+// ParseFormattedAt разбирает FormattedAt (RFC-3339). Единая точка
+// валидации поля: DecodeLabel проверяет ярлык при чтении с ленты,
+// RegisterTape'ам нужен Unix-секунды.
+func (l TapeLabel) ParseFormattedAt() (time.Time, error) {
+	ts, err := time.Parse(time.RFC3339, l.FormattedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("ярлык %s: некорректный formatted_at %q: %w",
+			l.UUID, l.FormattedAt, err)
+	}
+	return ts, nil
 }
 
 // TapeInfo — снимок состояния ленты для команды `tape info`.

@@ -141,7 +141,7 @@ filemark'а tar последней записанной части:
 | `format_version` | int     | `2`. Если `> current` → `ErrNewerFormat`.                |
 | `name`           | string  | Человекочитаемое имя кассеты, уникально в каталоге.     |
 | `uuid`           | string  | RFC-4122 v4, канонический вид (8-4-4-4-12, lowercase).  |
-| `formatted_at`   | string  | RFC-3339, UTC (`time.RFC3339`).                          |
+| `formatted_at`   | string  | RFC-3339, UTC (`time.RFC3339`); валидируется при чтении ярлыка — битое значение ошибка разбора. |
 
 ## 6. SessionIndex JSON
 

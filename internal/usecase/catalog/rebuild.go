@@ -27,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
@@ -35,7 +34,6 @@ import (
 
 // RebuildReport — итог реконструкции каталога с одной кассеты.
 type RebuildReport struct {
-	Tapes           int    // прочитано кассет (v1 — всегда 1; цепочка кассет — бэклог)
 	TapeName        string // имя кассеты из ярлыка
 	Sessions        int    // добавлено сессий
 	Files           int    // файлов в добавленных сессиях
@@ -61,10 +59,11 @@ func (uc *UseCase) Rebuild(ctx context.Context) (RebuildReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	formattedAt, err := time.Parse(time.RFC3339, label.FormattedAt)
+	// DecodeLabel валидирует formatted_at, но порт допускает любые
+	// реализации кодека — сверяем ещё раз на месте.
+	formattedAt, err := label.ParseFormattedAt()
 	if err != nil {
-		return rep, fmt.Errorf("rebuild: ярлык %s: некорректный formatted_at %q: %w",
-			label.UUID, label.FormattedAt, err)
+		return rep, fmt.Errorf("rebuild: %w", err)
 	}
 	if err := uc.cat.RegisterTape(ctx, label.UUID, label.Name, formattedAt.Unix()); err != nil {
 		return rep, fmt.Errorf("rebuild: регистрация кассеты: %w", err)
@@ -78,7 +77,6 @@ func (uc *UseCase) Rebuild(ctx context.Context) (RebuildReport, error) {
 	if err := uc.tape.ForwardFilemarks(ctx, 1); err != nil {
 		return rep, fmt.Errorf("rebuild: пропуск ярлыка: %w", err)
 	}
-	rep.Tapes = 1
 	rep.TapeName = label.Name
 	for {
 		if err := ctx.Err(); err != nil {

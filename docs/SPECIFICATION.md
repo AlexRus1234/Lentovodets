@@ -365,7 +365,7 @@ FORMAT §12).
   Кассета с указателем продолжения — Warn «вставьте кассету `<name>` и
   повторите rebuild»: данные прочитанной части уже сохранены, следование
   цепочке без оператора (auto-changer) — бэклог. Отчёт:
-  `{Tapes, TapeName, Sessions, Files, SkippedSessions, NextTapeName}`.
+  `{TapeName, Sessions, Files, SkippedSessions, NextTapeName}`.
 
 ### 4.5. Управление лентой
 

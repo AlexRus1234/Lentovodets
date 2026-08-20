@@ -18,6 +18,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"lentovodec/internal/domain"
@@ -74,5 +75,25 @@ func TestTapeInfoConstruction(t *testing.T) {
 	}
 	if info.Label.Name != "media-001" || info.Filemark != -1 {
 		t.Errorf("TapeInfo = %+v", info)
+	}
+}
+
+func TestTapeLabelParseFormattedAt(t *testing.T) {
+	label := domain.TapeLabel{UUID: "u-1", FormattedAt: "2026-01-01T00:00:00Z"}
+	ts, err := label.ParseFormattedAt()
+	if err != nil {
+		t.Fatalf("ParseFormattedAt: %v", err)
+	}
+	if ts.Unix() != 1767225600 {
+		t.Errorf("Unix = %d, want 1767225600", ts.Unix())
+	}
+
+	for _, bad := range []string{"", "not-a-time", "2026-01-01"} {
+		label.FormattedAt = bad
+		if _, err := label.ParseFormattedAt(); err == nil {
+			t.Errorf("formatted_at %q = nil, want ошибка", bad)
+		} else if !strings.Contains(err.Error(), "u-1") {
+			t.Errorf("ошибка %v не называет кассету", err)
+		}
 	}
 }

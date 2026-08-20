@@ -118,13 +118,9 @@ func (uc *UseCase) TapeInfo(ctx context.Context) (domain.TapeInfo, error) {
 	if err := uc.tape.Rewind(ctx); err != nil {
 		return domain.TapeInfo{}, fmt.Errorf("catalog: перемотка: %w", err)
 	}
-	block, err := uc.tape.ReadBlock(ctx)
+	label, err := uc.readLabel(ctx, "catalog")
 	if err != nil {
-		return domain.TapeInfo{}, fmt.Errorf("catalog: чтение ярлыка: %w", labelReadErr(err))
-	}
-	label, err := uc.codec.DecodeLabel(block)
-	if err != nil {
-		return domain.TapeInfo{}, fmt.Errorf("catalog: разбор ярлыка: %w", err)
+		return domain.TapeInfo{}, err
 	}
 	return domain.TapeInfo{Label: label, Filemark: -1}, nil
 }
