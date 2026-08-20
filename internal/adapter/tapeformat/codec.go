@@ -82,6 +82,12 @@ func (Codec) ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader
 	return ReadHeader(ctx, tape)
 }
 
+// ReadIndexFiles читает индекс сессии целиком (заголовок + файлы),
+// не трогая tar-поток.
+func (Codec) ReadIndexFiles(ctx context.Context, tape port.Tape) (port.SessionHeader, []domain.FileMeta, error) {
+	return ReadIndexFiles(ctx, tape)
+}
+
 // WriteContinuation пишет блок-указатель продолжения и filemark EOD.
 func (Codec) WriteContinuation(ctx context.Context, tape port.Tape, c port.Continuation) error {
 	return WriteContinuation(ctx, tape, c)

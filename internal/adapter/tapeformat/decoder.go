@@ -77,6 +77,25 @@ func ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader, error)
 	if err != nil {
 		return port.SessionHeader{}, err
 	}
+	return headerOf(idx), nil
+}
+
+// ReadIndexFiles читает индекс сессии целиком — заголовок и файлы —
+// с текущей позиции ленты, не читая tar-поток: проверка целостности
+// данных — работа readtest, а не реконструкции каталога (rebuild).
+// После вызова позиция — за filemark'ом индекса, в начале tar-сегмента;
+// чтобы встать на индекс следующей сессии, вызывающий пропускает
+// filemark tar-сегмента (ForwardFilemarks(1), docs/FORMAT.md §9).
+func ReadIndexFiles(ctx context.Context, tape port.Tape) (port.SessionHeader, []domain.FileMeta, error) {
+	idx, err := readIndex(ctx, tape)
+	if err != nil {
+		return port.SessionHeader{}, nil, err
+	}
+	return headerOf(idx), idx.Files, nil
+}
+
+// headerOf проецирует разобранный индекс в заголовок сессии порта.
+func headerOf(idx *SessionIndex) port.SessionHeader {
 	return port.SessionHeader{
 		SessionNum: idx.SessionNum,
 		Type:       idx.Type,
@@ -85,7 +104,7 @@ func ReadHeader(ctx context.Context, tape port.Tape) (port.SessionHeader, error)
 		JobName:    idx.JobName,
 		Part:       idx.Part,
 		Continues:  idx.Continues,
-	}, nil
+	}
 }
 
 // readIndex читает сегмент индекса (блоки до filemark'а) и разбирает JSON.

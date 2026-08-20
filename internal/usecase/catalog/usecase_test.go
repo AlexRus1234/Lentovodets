@@ -158,7 +158,7 @@ func labeledTape(t *testing.T, codec *testutil.FakeCodec) *testutil.FakeTape {
 	tape := testutil.NewFakeTape()
 	label := domain.TapeLabel{
 		Magic: domain.Magic, FormatVersion: domain.FormatVersion,
-		Name: "t-1", UUID: "u1",
+		Name: "t-1", UUID: "u1", FormattedAt: "2026-01-01T00:00:00Z",
 	}
 	block, err := codec.EncodeLabel(label)
 	if err != nil {
@@ -286,12 +286,36 @@ func TestCatalog_CanceledContext(t *testing.T) {
 // failCat — MemCatalog с инъекцией сбоев по методам.
 type failCat struct {
 	*testutil.MemCatalog
-	listTapes  error
-	listSess   error
-	getFiles   error
-	search     error
-	deleteSess error
-	prune      error
+	listTapes    error
+	listSess     error
+	getFiles     error
+	search       error
+	deleteSess   error
+	prune        error
+	registerTape error
+	createSess   error
+	saveFiles    error
+}
+
+func (c *failCat) RegisterTape(ctx context.Context, uuid, name string, formattedAt int64) error {
+	if c.registerTape != nil {
+		return c.registerTape
+	}
+	return c.MemCatalog.RegisterTape(ctx, uuid, name, formattedAt)
+}
+
+func (c *failCat) CreateSession(ctx context.Context, sess domain.Session) (int64, error) {
+	if c.createSess != nil {
+		return 0, c.createSess
+	}
+	return c.MemCatalog.CreateSession(ctx, sess)
+}
+
+func (c *failCat) SaveFiles(ctx context.Context, sessionID int64, files []domain.FileMeta) error {
+	if c.saveFiles != nil {
+		return c.saveFiles
+	}
+	return c.MemCatalog.SaveFiles(ctx, sessionID, files)
 }
 
 func (c *failCat) ListTapes(ctx context.Context) ([]port.TapeRecord, error) {

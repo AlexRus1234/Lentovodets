@@ -75,6 +75,16 @@ type TapeCodec interface {
 	// восстановления её данных.
 	ReadHeader(ctx context.Context, tape Tape) (SessionHeader, error)
 
+	// ReadIndexFiles читает индекс сессии целиком — заголовок и файлы —
+	// с текущей позиции ленты, не трогая tar-поток: целостность данных
+	// проверяет readtest, а не реконструкция каталога. После вызова
+	// позиция — за filemark'ом индекса (в начале tar-сегмента); чтобы
+	// встать на индекс следующей сессии, вызывающий пропускает filemark
+	// tar-сегмента (ForwardFilemarks(1), docs/FORMAT.md §9). Ошибки те
+	// же, что у ReadSession на позиции индекса: *domain.EmptyIndexError
+	// на EOD, *domain.ContinuationError на блоке-указателе продолжения.
+	ReadIndexFiles(ctx context.Context, tape Tape) (SessionHeader, []domain.FileMeta, error)
+
 	// WriteContinuation пишет блок-указатель продолжения в текущую
 	// позицию ленты (сразу после filemark'а tar завершённой части);
 	// filemark'и не ставит — закрывающую EOD-пару (новый EOD кассеты)

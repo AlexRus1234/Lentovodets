@@ -324,6 +324,60 @@ func TestTapeReadtest(t *testing.T) {
 	}
 }
 
+func TestCatalogRebuild(t *testing.T) {
+	e := newEnv(t, "", nil)
+	e.codec.IdxQueue = []testutil.IdxSession{
+		{
+			Header: port.SessionHeader{
+				SessionNum: 1, Type: domain.SessionFull, Timestamp: 100,
+				JobRunID: "run-1", JobName: "media", Part: 1,
+			},
+			Files: []domain.FileMeta{{Path: "/data/a", Hash: "h", State: domain.StateAdded, Size: 1}},
+		},
+	}
+	// лента ярлыка + filemark (tapeFor) хватает на 1 сессию и её tar
+	out, err := outOf(t, e, "catalog", "rebuild")
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	for _, want := range []string{"добавлено сессий: 1", "файлов записано: 1", "T1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("вывод %q не содержит %q", out, want)
+		}
+	}
+	sessions, _ := e.cat.ListSessions(context.Background(), tapeUUID)
+	if len(sessions) != 1 || sessions[0].Num != 1 || sessions[0].JobRunID != "run-1" {
+		t.Fatalf("каталог после rebuild: %+v", sessions)
+	}
+
+	// повторный rebuild — идемпотентный
+	e2 := envAt(t, e.cfgDir, nil)
+	registerTape(t, e2.cat)
+	if _, err := e2.cat.CreateSession(context.Background(), domain.Session{
+		TapeUUID: tapeUUID, Num: 1, Type: domain.SessionFull, Timestamp: 100, JobRunID: "run-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e2.codec.IdxQueue = []testutil.IdxSession{{
+		Header: port.SessionHeader{
+			SessionNum: 1, Type: domain.SessionFull, Timestamp: 100,
+			JobRunID: "run-1", JobName: "media", Part: 1,
+		},
+		Files: []domain.FileMeta{{Path: "/data/a", Hash: "h", State: domain.StateAdded, Size: 1}},
+	}}
+	out, err = outOf(t, e2, "catalog", "rebuild")
+	if err != nil {
+		t.Fatalf("повторный rebuild: %v", err)
+	}
+	if !strings.Contains(out, "пропущено сессий (уже в каталоге): 1") {
+		t.Fatalf("вывод повтора: %q", out)
+	}
+	sessions, _ = e2.cat.ListSessions(context.Background(), tapeUUID)
+	if len(sessions) != 1 {
+		t.Fatalf("после повтора сессий %d; want 1", len(sessions))
+	}
+}
+
 func TestDaemonCommands_ViaClient(t *testing.T) {
 	client := &fakeClient{
 		tapes:    []port.TapeRecord{{UUID: "u1", Name: "T1", FormattedAt: 1700000000}},

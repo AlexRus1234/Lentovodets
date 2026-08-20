@@ -155,7 +155,7 @@ func (uc *UseCase) ReadTest(ctx context.Context) ([]TapeReport, error) {
 	if err := uc.tape.Rewind(ctx); err != nil {
 		return nil, fmt.Errorf("readtest: перемотка: %w", err)
 	}
-	label, err := uc.readLabel(ctx)
+	label, err := uc.readLabel(ctx, "readtest")
 	if err != nil {
 		return nil, err
 	}
@@ -239,15 +239,15 @@ func checkedBytes(files []domain.FileMeta) int64 {
 	return n
 }
 
-// readLabel читает ярлык с BOT.
-func (uc *UseCase) readLabel(ctx context.Context) (domain.TapeLabel, error) {
+// readLabel читает ярлык с BOT; op — префикс ошибок вызывающей операции.
+func (uc *UseCase) readLabel(ctx context.Context, op string) (domain.TapeLabel, error) {
 	block, err := uc.tape.ReadBlock(ctx)
 	if err != nil {
-		return domain.TapeLabel{}, fmt.Errorf("readtest: чтение ярлыка: %w", labelReadErr(err))
+		return domain.TapeLabel{}, fmt.Errorf("%s: чтение ярлыка: %w", op, labelReadErr(err))
 	}
 	label, err := uc.codec.DecodeLabel(block)
 	if err != nil {
-		return domain.TapeLabel{}, fmt.Errorf("readtest: разбор ярлыка: %w", err)
+		return domain.TapeLabel{}, fmt.Errorf("%s: разбор ярлыка: %w", op, err)
 	}
 	return label, nil
 }

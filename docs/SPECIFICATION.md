@@ -353,6 +353,19 @@ FORMAT §12).
 - `DeleteSession(sessionID)` — удаление записи из каталога (данные на ленте
   остаются, но путь к ним теряется).
 - `Prune(before)` — удаление всех сессий старше `before`.
+- `Rebuild()` — реконструкция каталога из содержимого вставленной кассеты
+  (DR: утерян/порчен `lentovodec.db`, кассета, неизвестная каталогу,
+  переезд на новую машину). Ярлык → `RegisterTape`, JSON-индексы всех
+  сессий подряд (`ReadIndexFiles` + пропуск tar-сегмента `MTFSF(1)`,
+  [FORMAT §9](FORMAT.md#9-правила-перемотки)) → `CreateSession` +
+  `SaveFiles`; tar-поток не читается — **rebuild ≠ верификация**
+  (целостность проверяет `ReadTest`). Идемпотентность: существующая
+  сессия (`UNIQUE tape_uuid+session_num`) пропускается — повторный
+  запуск безопасен, работает и в живой каталог (дополнит недостающее).
+  Кассета с указателем продолжения — Warn «вставьте кассету `<name>` и
+  повторите rebuild»: данные прочитанной части уже сохранены, следование
+  цепочке без оператора (auto-changer) — бэклог. Отчёт:
+  `{Tapes, TapeName, Sessions, Files, SkippedSessions, NextTapeName}`.
 
 ### 4.5. Управление лентой
 
@@ -393,8 +406,9 @@ FORMAT §12).
 | `lentovodec catalog sessions [--tape U]`   | daemon      | Список сессий                                       |
 | `lentovodec catalog files --session N`     | daemon      | Файлы сессии                                        |
 | `lentovodec catalog search <pattern>`      | daemon      | Поиск файлов                                        |
-| `lentovodec catalog rm --session N`        | daemon      | Удалить сессию из каталога                          |
+| `lentovodec catalog rm --session N`        | daemon      | Удалить сессию из каталога                        |
 | `lentovodec catalog prune --days N`        | daemon      | Удалить сессии старше N дней                        |
+| `lentovodec catalog rebuild`               | local       | Пересобрать каталог из индексов вставленной кассеты (DR; идемпотентно) |
 | `lentovodec passwd`                        | local       | Спросить пароль (дважды) и вывести bcrypt-хеш для `web_password_hash` в TOML |
 | `lentovodec daemon [--port 29201] [--bind 127.0.0.1]` | server | Запустить демона |
 

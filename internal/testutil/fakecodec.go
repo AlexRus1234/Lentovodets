@@ -64,6 +64,24 @@ type FakeCodec struct {
 	// заголовок сессии 1 новой кассеты); пусто — EmptyIndexError.
 	Headers     []port.SessionHeader
 	HeaderCalls int
+
+	// IdxQueue — очередь ReadIndexFiles (заголовок + файлы каждой
+	// сессии, как лежат на ленте подряд); пусто — EmptyIndexError
+	// (EOD, как у реального декодера). ErrReadIdx инъекцирует сбой,
+	// IdxCont на вызове IdxContOnCall — указатель продолжения на
+	// месте индекса следующей сессии (конец кассеты цепочки).
+	IdxQueue      []IdxSession
+	IdxCalls      int
+	ErrReadIdx    error
+	IdxCont       *domain.ContinuationError
+	IdxContOnCall int
+}
+
+// IdxSession — элемент очереди ReadIndexFiles: заголовок сессии и
+// файлы её индекса.
+type IdxSession struct {
+	Header port.SessionHeader
+	Files  []domain.FileMeta
 }
 
 // EncodeLabel кодирует ярлык в JSON (без паддинга до BlockSize).
@@ -179,6 +197,32 @@ func (c *FakeCodec) ReadHeader(ctx context.Context, tape port.Tape) (port.Sessio
 		return h, nil
 	}
 	return port.SessionHeader{}, &domain.EmptyIndexError{}
+}
+
+// ReadIndexFiles выдаёт очередной элемент IdxQueue (заголовок + файлы);
+// пустая очередь — *domain.EmptyIndexError. На вызове IdxContOnCall
+// (если задан) — *domain.ContinuationError: кассета кончилась, цепочка
+// продолжается на следующей.
+func (c *FakeCodec) ReadIndexFiles(
+	ctx context.Context,
+	tape port.Tape,
+) (port.SessionHeader, []domain.FileMeta, error) {
+	c.IdxCalls++
+	if c.ErrReadIdx != nil {
+		return port.SessionHeader{}, nil, c.ErrReadIdx
+	}
+	if c.IdxCont != nil && c.IdxContOnCall > 0 && c.IdxCalls == c.IdxContOnCall {
+		return port.SessionHeader{}, nil, c.IdxCont
+	}
+	if err := ctx.Err(); err != nil {
+		return port.SessionHeader{}, nil, err
+	}
+	if len(c.IdxQueue) > 0 {
+		s := c.IdxQueue[0]
+		c.IdxQueue = c.IdxQueue[1:]
+		return s.Header, append([]domain.FileMeta(nil), s.Files...), nil
+	}
+	return port.SessionHeader{}, nil, &domain.EmptyIndexError{}
 }
 
 // WriteContinuation запоминает указатель продолжения.

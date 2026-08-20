@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Команды группы catalog — клиент демона (SPEC §5: daemon-режим).
+// Команды группы catalog: rebuild — local-режим (прямой доступ к ленте
+// и каталогу, как tape readtest); остальные — клиенты демона
+// (SPEC §5: daemon-режим).
 
 package cli
 
@@ -25,6 +27,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"lentovodec/internal/port"
+	"lentovodec/internal/usecase/catalog"
 )
 
 // newCatalogCmd — группа `lentovodec catalog ...`.
@@ -40,6 +45,7 @@ func newCatalogCmd(deps Deps, flags *globalFlags) *cobra.Command {
 		newCatalogSearchCmd(deps, flags),
 		newCatalogRmCmd(deps, flags),
 		newCatalogPruneCmd(deps, flags),
+		newCatalogRebuildCmd(deps, flags),
 	)
 	return cmd
 }
@@ -201,4 +207,42 @@ func newCatalogPruneCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	cmd.Flags().Int64Var(&days, "days", 0, "возраст сессий в днях (обязательно)")
 	_ = cmd.MarkFlagRequired("days")
 	return cmd
+}
+
+// newCatalogRebuildCmd — `catalog rebuild`: пересобрать каталог из
+// индексов вставленной кассеты (local-режим: лента + каталог напрямую,
+// демон не нужен и не должен параллельно занимать стример).
+func newCatalogRebuildCmd(deps Deps, flags *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rebuild",
+		Short: "Пересобрать каталог из индексов вставленной кассеты (DR; локально, без демона)",
+		Long: `Пересобирает каталог из содержимого вставленной кассеты: ярлык и
+JSON-индексы сессий переносятся в базу, tar-поток не читается
+(быстро; целостность данных проверяет tape readtest). Сценарии:
+утерян или повреждён lentovodec.db, кассета, неизвестная каталогу,
+переезд на новую машину. Повторный запуск безопасен: существующие
+сессии пропускаются.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			rt, err := openRuntime(deps, flags)
+			if err != nil {
+				return err
+			}
+			return rt.runLocal(func(ctx context.Context, tape port.Tape, cat port.Catalog) error {
+				uc := catalog.New(cat, tape, deps.Codec, nil, rt.logger(), nil)
+				rep, err := uc.Rebuild(ctx)
+				if err != nil {
+					return err
+				}
+				rt.printf("кассета: %s\n", rep.TapeName)
+				rt.printf("добавлено сессий: %d\n", rep.Sessions)
+				rt.printf("пропущено сессий (уже в каталоге): %d\n", rep.SkippedSessions)
+				rt.printf("файлов записано: %d\n", rep.Files)
+				if rep.NextTapeName != "" {
+					rt.printf("цепочка продолжается: вставьте кассету %s и повторите rebuild\n",
+						rep.NextTapeName)
+				}
+				return nil
+			})
+		},
+	}
 }
