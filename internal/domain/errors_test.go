@@ -124,6 +124,30 @@ func TestTypedErrors(t *testing.T) {
 			`ожидалось "media-014", найдено "media-099"`,
 			&domain.ChainMismatchError{},
 		},
+		{
+			"пустой индекс сессии",
+			&domain.EmptyIndexError{},
+			"индекс сессии пуст",
+			&domain.EmptyIndexError{},
+		},
+		{
+			"нет кассеты в приводе",
+			&domain.NoMediumError{},
+			"нет кассеты в приводе",
+			&domain.NoMediumError{},
+		},
+		{
+			"сессия не читается обратно",
+			&domain.VerifyError{SessionNum: 3, Details: "файл повреждён"},
+			"сессия 3 записана, но не читается обратно: файл повреждён",
+			&domain.VerifyError{},
+		},
+		{
+			"сессия не читается обратно, потерян файл",
+			&domain.VerifyError{SessionNum: 2, File: "/tank/big.bin", Details: "состав не совпал"},
+			`файл "/tank/big.bin": состав не совпал`,
+			&domain.VerifyError{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,5 +209,14 @@ func TestErrorsAsExtractsDetails(t *testing.T) {
 	}
 	if mm.Expected != "media-014" || mm.Got != "media-099" {
 		t.Errorf("ChainMismatchError = %+v, want {Expected:media-014 Got:media-099}", mm)
+	}
+
+	var ve *domain.VerifyError
+	if !errors.As(fmt.Errorf("backup: %w",
+		&domain.VerifyError{SessionNum: 5, File: "/x"}), &ve) {
+		t.Fatal("errors.As не извлёк VerifyError")
+	}
+	if ve.SessionNum != 5 || ve.File != "/x" {
+		t.Errorf("VerifyError = %+v, want {SessionNum:5 File:/x}", ve)
 	}
 }

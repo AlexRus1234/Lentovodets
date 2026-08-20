@@ -298,6 +298,35 @@ func (e *NotContinuationError) Is(target error) bool {
 	return ok
 }
 
+// VerifyError — сессия записана на ленту, но обратное чтение
+// (verify-after-write) не сходится: хеш файла не совпал с индексом,
+// состав прочитанных файлов отличается от записанного либо лента не
+// позиционируется на свежезаписанную сессию. Данные уже на ленте и в
+// каталоге — откат бессмыслен (перезапись не лечит носитель): сессия
+// остаётся зафиксированной, решение (ремонт/замена кассеты, повторный
+// бекап) за оператором.
+type VerifyError struct {
+	SessionNum int32  // номер сессии (части) на её кассете
+	File       string // путь, отсутствующий в прочитанном составе; "" — не применимо
+	Details    string // детали: текст ошибки чтения / расхождение состава
+}
+
+// Error реализует интерфейс error.
+func (e *VerifyError) Error() string {
+	if e.File != "" {
+		return fmt.Sprintf(
+			"сессия %d записана, но не читается обратно: файл %q: %s",
+			e.SessionNum, e.File, e.Details)
+	}
+	return fmt.Sprintf("сессия %d записана, но не читается обратно: %s", e.SessionNum, e.Details)
+}
+
+// Is поддерживает errors.Is(err, &VerifyError{}).
+func (e *VerifyError) Is(target error) bool {
+	_, ok := target.(*VerifyError)
+	return ok
+}
+
 // NoMediumError — в приводе нет кассеты: open или ioctl st-драйвера
 // вернул ENOMEDIUM («no medium found»). iface-слои показывают текст
 // ошибки вместо сырого errno (web: 409 code=no_medium).

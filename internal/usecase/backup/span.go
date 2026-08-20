@@ -52,6 +52,10 @@ type spanRun struct {
 	budget             int64 // бюджет части на текущей кассете
 	prevMoveAtCapacity bool  // предыдущий ENOSPC-перенос был с бюджетом capacity
 
+	verify        bool  // Options.Verify: перечитывать записанные части
+	verifiedFiles int   // сумма по верифицированным частям
+	verifiedBytes int64 // байты данных (без tombstone/ссылок)
+
 	first    domain.Session // сессия части 1 (для Result)
 	firstSet bool
 	tapes    []string // имена использованных кассет по порядку
@@ -63,28 +67,44 @@ type spanRun struct {
 // при частях >1 или newTape changer обязан быть не nil (проверено
 // вызывающим, кроме деградации newTape без changer'а — тогда пишем
 // в текущую кассету).
-func (uc *UseCase) writeParts(ctx context.Context, st tapeState, plan spanPlan, isFull bool, stats Stats) (Result, error) {
+func (uc *UseCase) writeParts(
+	ctx context.Context,
+	st tapeState,
+	plan spanPlan,
+	opts Options,
+	isFull bool,
+	stats Stats,
+) (Result, error) {
 	r := &spanRun{
 		uc: uc, st: st, plan: plan, isFull: isFull, ctx: ctx,
 		ts:     spanTape{tape: uc.tape, label: st.label, lastNum: st.lastNum},
 		budget: plan.budget,
+		verify: opts.Verify,
 	}
 	if err := r.run(ctx); err != nil {
 		uc.fail(err)
 		return Result{}, err
 	}
 	uc.done()
-	uc.log.Info("backup finished",
+	fields := []any{
 		slog.String("job", st.job.Name),
 		slog.Int64("session_id", r.first.ID),
 		slog.Int("session_num", int(r.first.Num)),
 		slog.String("type", string(r.first.Type)),
 		slog.Int("parts", len(plan.parts)),
 		slog.String("tapes", strings.Join(r.tapes, ",")),
+		slog.Bool("verify", r.verify),
 		slog.Int("added", stats.Added),
 		slog.Int("modified", stats.Modified),
 		slog.Int("deleted", stats.Deleted),
-		slog.Int64("bytes", stats.Bytes))
+		slog.Int64("bytes", stats.Bytes),
+	}
+	if r.verify {
+		fields = append(fields,
+			slog.Int("verified_files", r.verifiedFiles),
+			slog.Int64("verified_bytes", r.verifiedBytes))
+	}
+	uc.log.Info("backup finished", fields...)
 	return Result{
 		Session:         r.first,
 		Stats:           stats,
@@ -92,6 +112,9 @@ func (uc *UseCase) writeParts(ctx context.Context, st tapeState, plan spanPlan, 
 		PlannedByBudget: plan.byBudget,
 		Parts:           len(plan.parts),
 		Tapes:           r.tapes,
+		Verified:        r.verify,
+		VerifiedFiles:   r.verifiedFiles,
+		VerifiedBytes:   r.verifiedBytes,
 	}, nil
 }
 
@@ -168,11 +191,23 @@ func (r *spanRun) beginPart(ctx context.Context, k int) (domain.Session, *port.C
 }
 
 // commit фиксирует записанную часть в каталоге и бухгалтерии цикла;
-// для незаключительной части — плановая смена кассеты.
+// при включённой верификации часть перечитывается со сверкой хешей
+// (до плановой смены кассеты — после eject прочитать нечем), сбой
+// верификации — VerifyError без откката: данные уже на ленте и в
+// каталоге, перезапись не лечит носитель. Для незаключительной части —
+// плановая смена кассеты.
 func (r *spanRun) commit(ctx context.Context, k int, sess domain.Session) error {
 	r.uc.progUpdate(port.ProgressUpdate{Phase: port.PhaseFinalize})
 	if err := r.uc.cat.SaveFiles(ctx, sess.ID, r.plan.parts[k]); err != nil {
 		return fmt.Errorf("backup: сохранение файлов сессии %d: %w", sess.ID, err)
+	}
+	if r.verify {
+		files, bytes, err := r.uc.verifyPart(ctx, r.ts.tape, sess, r.plan.parts[k])
+		if err != nil {
+			return err
+		}
+		r.verifiedFiles += files
+		r.verifiedBytes += bytes
 	}
 	r.ts.lastNum = sess.Num
 	r.created = append(r.created, sess.ID)

@@ -296,6 +296,41 @@ func TestBackup_UnknownJob(t *testing.T) {
 	}
 }
 
+// TestBackup_VerifyFlag — флаг --verify включает обратное чтение
+// записанного; без флага вызовов нет.
+func TestBackup_VerifyFlag(t *testing.T) {
+	e := newEnv(t, jobTOML, nil)
+	registerTape(t, e.cat)
+	seedFS(t, e)
+	// скан /data: каталог + два файла — 3 записи в сессии
+	e.codec.ReadFiles = []domain.FileMeta{
+		{Path: "/data", State: domain.StateAdded},
+		{Path: "/data/a.txt", State: domain.StateAdded, Size: 4},
+		{Path: "/data/b.txt", State: domain.StateAdded, Size: 4},
+	}
+
+	out, err := outOf(t, e, "backup", "media", "--verify")
+	if err != nil {
+		t.Fatalf("backup --verify: %v (%q)", err, out)
+	}
+	if !strings.Contains(out, "верифицировано: 3 файлов") {
+		t.Errorf("вывод %q без итога верификации", out)
+	}
+	if e.codec.ReadCalls != 1 {
+		t.Errorf("ReadSession вызовов %d; want 1", e.codec.ReadCalls)
+	}
+
+	e2 := envAt(t, e.cfgDir, nil)
+	registerTape(t, e2.cat)
+	seedFS(t, e2)
+	if _, err := outOf(t, e2, "backup", "media"); err != nil {
+		t.Fatalf("backup без --verify: %v", err)
+	}
+	if e2.codec.ReadCalls != 0 {
+		t.Errorf("ReadSession вызовов без --verify: %d; want 0", e2.codec.ReadCalls)
+	}
+}
+
 func TestTapeFormat(t *testing.T) {
 	e := newEnv(t, jobTOML, nil)
 	out, err := outOf(t, e, "tape", "format", "НоваяЛента", "--force")

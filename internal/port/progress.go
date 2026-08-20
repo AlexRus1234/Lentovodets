@@ -24,13 +24,14 @@ package port
 const (
 	PhaseScan       = "scan"        // сканирование ФС
 	PhaseWrite      = "write"       // запись на ленту / чтение с ленты
+	PhaseVerify     = "verify"      // обратное чтение записанного со сверкой хешей
 	PhaseFinalize   = "finalize"    // фиксация каталога и filemark'ов
 	PhaseTapeChange = "tape_change" // ожидание смены кассеты (spanning)
 )
 
 // ProgressUpdate — снимок прогресса длительной операции.
 type ProgressUpdate struct {
-	Phase          string // PhaseScan | PhaseWrite | PhaseFinalize | PhaseTapeChange
+	Phase          string // PhaseScan | PhaseWrite | PhaseVerify | PhaseFinalize | PhaseTapeChange
 	CurrentFile    string // обрабатываемый файл; "" — не применимо
 	ProcessedBytes int64  // обработано байт
 	TotalBytes     int64  // всего байт; 0 — неизвестно

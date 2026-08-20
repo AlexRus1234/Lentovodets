@@ -194,6 +194,41 @@ func TestBackupStart_RequiresJob(t *testing.T) {
 	}
 }
 
+// TestBackupStart_VerifyParam — query-параметр verify=true пробрасывается
+// в Options (обратное чтение записанного), без параметра верификации
+// нет. Фейк-кодек: состав прочитанного задаётся ReadFiles.
+func TestBackupStart_VerifyParam(t *testing.T) {
+	env := newEnv(t, nil)
+	seedFiles(t, env)
+	addJob(t, env)
+	formatTape(t, env)
+	// скан /data: каталоги + два файла — 4 записи
+	env.codec.ReadFiles = []domain.FileMeta{
+		{Path: "/data", State: domain.StateAdded},
+		{Path: "/data/a.txt", State: domain.StateAdded, Size: 14},
+		{Path: "/data/sub", State: domain.StateAdded},
+		{Path: "/data/sub/b.conf", State: domain.StateAdded, Size: 6},
+	}
+
+	if code, _ := do(t, env, http.MethodPost, "/api/backup/start?job=media&verify=true", ""); code != http.StatusAccepted {
+		t.Fatalf("start verify=true: %d", code)
+	}
+	waitFor(t, env, "task-a", func(v progressView) bool { return v.State == "success" })
+	if env.codec.ReadCalls != 1 {
+		t.Errorf("ReadSession вызовов %d; want 1 (verify включён)", env.codec.ReadCalls)
+	}
+
+	// Без параметра верификация выключена (дефолт — прежнее поведение).
+	if code, _ := do(t, env, http.MethodPost, "/api/backup/start?job=media", ""); code != http.StatusAccepted {
+		t.Fatalf("start без verify: %d", code)
+	}
+	waitFor(t, env, "task-b", func(v progressView) bool { return v.State == "success" })
+	if env.codec.ReadCalls != 1 {
+		t.Errorf("ReadSession вызовов после запуска без verify: %d; want 1 (не изменился)",
+			env.codec.ReadCalls)
+	}
+}
+
 // blockingCodec зависает на WriteSession до закрытия release —
 // держит задачу в состоянии running.
 type blockingCodec struct {

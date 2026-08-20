@@ -36,6 +36,7 @@ import (
 type Options struct {
 	Full   bool // полный бекап: перезапись ленты с сессии 1
 	DryRun bool // только сканирование, без записи и каталога
+	Verify bool // обратное чтение записанного со сверкой хешей (verify-after-write)
 }
 
 // Stats — статистика запуска.
@@ -69,6 +70,16 @@ type Result struct {
 
 	// Tapes — имена использованных кассет в порядке записи.
 	Tapes []string
+
+	// Verified — запуск с Options.Verify завершился успешно: каждая
+	// часть перечитана, хеши и состав сошлись. false при выключенной
+	// верификации; сбой верификации возвращает ошибку (VerifyError).
+	Verified bool
+
+	// VerifiedFiles / VerifiedBytes — сколько файлов и байт данных
+	// сверено верификацией (сумма по частям).
+	VerifiedFiles int
+	VerifiedBytes int64
 }
 
 // UseCase выполняет бекап задания на ленту.
@@ -167,7 +178,7 @@ func (uc *UseCase) Backup(ctx context.Context, jobName string, opts Options) (Re
 			return Result{}, err
 		}
 	}
-	return uc.writeParts(ctx, st, plan, isFull, stats)
+	return uc.writeParts(ctx, st, plan, opts, isFull, stats)
 }
 
 // tapeState — состояние кассеты и задания, собранное до скана.

@@ -118,7 +118,7 @@ CLI построены поверх него.
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `POST` | `/api/backup/start?job=&full=` | Запустить бекап, вернуть `taskID` |
+| `POST` | `/api/backup/start?job=&full=&verify=` | Запустить бекап, вернуть `taskID`; `verify=true` — перечитать записанное со сверкой хешей (фаза `verify` в прогрессе) |
 | `POST` | `/api/restore/start?paths=&dest=&original=` | Запустить восстановление, вернуть `taskID` |
 | `GET` | `/api/tasks/active` | Список активных задач (включая ожидающие кассету) |
 | `GET` | `/api/tasks/{id}/progress` | Прогресс задачи (объект ниже) |
@@ -149,8 +149,8 @@ CLI построены поверх него.
 ```
 
 `state` — `running | awaiting_tape | success | error`; `phase` —
-`scan | write | finalize`; `logs` — кольцевой буфер последних строк
-лога задачи.
+`scan | write | verify | finalize`; `logs` — кольцевой буфер последних
+строк лога задачи.
 
 `awaiting_tape` — расширение spanning: задача приостановлена, нужна
 следующая кассета цепочки. `message` несёт текст для оператора

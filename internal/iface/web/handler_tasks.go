@@ -38,7 +38,7 @@ type taskIDResponse struct {
 	TaskID string `json:"task_id"`
 }
 
-// handleBackupStart — POST /api/backup/start?job=&full=.
+// handleBackupStart — POST /api/backup/start?job=&full=&verify=.
 //
 // Фоновая задача захватывает устройство ленты до конца бекапа
 // (tapeGate): probe статуса видит его доступным, короткие операции
@@ -50,6 +50,7 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	full := isTruthy(r.URL.Query().Get("full"))
+	verify := isTruthy(r.URL.Query().Get("verify"))
 
 	id, err := s.startTapeTask("backup", func(task *Task) {
 		s.gate.acquireTask()
@@ -64,7 +65,7 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		uc := backup.New(s.deps.Config, tape, s.deps.Codec, s.deps.Catalog,
 			s.deps.FS, s.deps.Hasher, s.deps.Rand, s.deps.Clock,
 			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
-		if _, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full}); err != nil {
+		if _, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full, Verify: verify}); err != nil {
 			task.finishError(err, s.deps.Clock.Now()) // идемпотентно после prog.Fail
 		}
 	})
@@ -73,7 +74,7 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deps.Log.Info("backup task started",
-		"job", jobName, "full", full, "user", requestUser(r), "event", "task")
+		"job", jobName, "full", full, "verify", verify, "user", requestUser(r), "event", "task")
 	writeJSON(w, http.StatusAccepted, taskIDResponse{TaskID: id})
 }
 

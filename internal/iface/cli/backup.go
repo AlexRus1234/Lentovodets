@@ -30,9 +30,9 @@ import (
 )
 
 // newBackupCmd — `lentovodec backup <job> [--full] [--dry-run]
-// [--next-tape NAME]`.
+// [--verify] [--next-tape NAME]`.
 func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
-	var full, dryRun bool
+	var full, dryRun, verify bool
 	var nextTape string
 	cmd := &cobra.Command{
 		Use:   "backup <job>",
@@ -51,7 +51,7 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 				}
 				uc := backup.New(rt.cfg, tape, deps.Codec, cat, deps.FS,
 					deps.Hasher, deps.Rand, deps.Clock, nil, rt.logger(), changer)
-				res, err := uc.Backup(ctx, args[0], backup.Options{Full: full, DryRun: dryRun})
+				res, err := uc.Backup(ctx, args[0], backup.Options{Full: full, DryRun: dryRun, Verify: verify})
 				if err != nil {
 					return err
 				}
@@ -64,6 +64,10 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 				if res.Parts > 1 {
 					rt.printf("частей %d на кассетах: %s\n", res.Parts, strings.Join(res.Tapes, ", "))
 				}
+				if res.Verified {
+					rt.printf("верифицировано: %d файлов (%s)\n",
+						res.VerifiedFiles, humanSize(res.VerifiedBytes))
+				}
 				rt.printf("%s\n", statsLine(res.Stats))
 				return nil
 			})
@@ -71,6 +75,8 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "полный бекап (перезапись ленты с сессии 1)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "только сканирование, без записи")
+	cmd.Flags().BoolVar(&verify, "verify", false,
+		"прочитать записанное обратно и сверить хеши сразу после записи (примерно ×2 к времени)")
 	cmd.Flags().StringVar(&nextTape, "next-tape", "",
 		"имя следующей кассеты для неинтерактивного spanning (--next-tape media-014)")
 	return cmd
