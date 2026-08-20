@@ -19,7 +19,11 @@
 
 package port
 
-import "context"
+import (
+	"context"
+
+	"lentovodec/internal/domain"
+)
 
 // Tape — последовательный блочный доступ к стримерной ленте.
 //
@@ -60,4 +64,10 @@ type Tape interface {
 
 	// Close освобождает дескриптор устройства.
 	Close() error
+}
+
+// TapeDiagnostics — необязательная диагностика привода. Реализации Tape
+// могут не поддерживать этот интерфейс (например, filetape).
+type TapeDiagnostics interface {
+	TapeAlerts(ctx context.Context) ([]domain.TapeAlert, error)
 }

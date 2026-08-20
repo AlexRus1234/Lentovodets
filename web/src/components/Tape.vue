@@ -152,6 +152,16 @@ onMounted(() => {
         <dd>{{ info.label.magic }} v{{ info.label.format_version }}</dd>
         <dt>{{ t('tape.info.filemark') }}</dt>
         <dd>{{ info.filemark }}</dd>
+        <dt>{{ t('tape.info.alerts') }}</dt>
+        <dd>
+          <span v-if="(info.alerts ?? []).length === 0" class="dim">{{ t('tape.info.alerts.none') }}</span>
+          <span
+            v-for="alert in info.alerts ?? []"
+            :key="alert.code"
+            class="alert-badge"
+            :class="alert.critical ? 'critical' : 'warning'"
+          >{{ alert.name }} ({{ alert.code }})</span>
+        </dd>
       </dl>
       <p v-else class="dim">—</p>
       <div class="row">
@@ -214,6 +224,16 @@ dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.alert-badge {
+  display: inline-block;
+  margin: 0 0.35rem 0.35rem 0;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  color: #1b1b1b;
+  font-size: 0.85rem;
+}
+.alert-badge.warning { background: #f2c94c; }
+.alert-badge.critical { background: #eb5757; color: white; }
 .row {
   display: flex;
   gap: 0.5rem;

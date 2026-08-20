@@ -42,6 +42,13 @@ export interface TapeLabel {
 export interface TapeInfo {
   label: TapeLabel
   filemark: number
+  alerts?: TapeAlert[]
+}
+
+export interface TapeAlert {
+  name: string
+  code: number
+  critical: boolean
 }
 
 export interface Job {

@@ -190,7 +190,7 @@ $ lentovodec restore --dest /restore
 |---|---|---|
 | `lentovodec tape format <name> [--force]` | local | Отформатировать кассету: ярлык (UUID, имя) + двойной EOF + запись в каталог. `--force` — перезапись уже размеченной |
 | `lentovodec tape readtest` | local | Диагностическое чтение всей кассеты со сверкой хешей, без записи на ФС; для spanning-цепочек — отчёт по каждой кассете (следование цепочке — как у restore) |
-| `lentovodec tape info` | daemon | Прочитать ярлык текущей кассеты |
+| `lentovodec tape info` | daemon | Прочитать ярлык и активные TapeAlert-флаги текущей кассеты |
 | `lentovodec tape eject` | daemon | Извлечь кассету (MTOFFL) |
 
 ### Задания
