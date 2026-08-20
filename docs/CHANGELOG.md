@@ -27,6 +27,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ### Added
 
+- `tape info` и Web UI показывают активные TapeAlert-флаги привода через
+  SCSI LOG SENSE page 0x2e: необходимость чистки, ресурс носителя и ошибки
+  чтения/записи. Недоступность SG_IO не мешает чтению ярлыка.
+
 - История копий файла в Web UI и через `GET /api/catalog/file-copies?path=`;
   каждая версия показывает дату, кассету, сессию, размер и хеш и может быть
   восстановлена выборочно. Добавлена CLI-команда `catalog copies <path>`.

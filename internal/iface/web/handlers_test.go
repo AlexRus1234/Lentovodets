@@ -151,7 +151,7 @@ func TestTape_FormatInfoEject(t *testing.T) {
 	}
 
 	code, body = do(t, env, http.MethodGet, "/api/tape/info", "")
-	if code != http.StatusOK || !strings.Contains(body, "LTO-001") {
+	if code != http.StatusOK || !strings.Contains(body, "LTO-001") || !strings.Contains(body, `"alerts":[]`) {
 		t.Fatalf("info: %d %q", code, body)
 	}
 

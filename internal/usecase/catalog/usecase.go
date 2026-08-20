@@ -131,7 +131,18 @@ func (uc *UseCase) TapeInfo(ctx context.Context) (domain.TapeInfo, error) {
 	if err != nil {
 		return domain.TapeInfo{}, err
 	}
-	return domain.TapeInfo{Label: label, Filemark: -1}, nil
+	info := domain.TapeInfo{Label: label, Filemark: -1}
+	if diagnostics, ok := uc.tape.(port.TapeDiagnostics); ok {
+		alerts, alertErr := diagnostics.TapeAlerts(ctx)
+		if alertErr != nil {
+			if uc.log != nil {
+				uc.log.Warn("tapealert unavailable", slog.String("error", alertErr.Error()))
+			}
+		} else {
+			info.Alerts = alerts
+		}
+	}
+	return info, nil
 }
 
 // Eject извлекает ленту (MTOFFL).

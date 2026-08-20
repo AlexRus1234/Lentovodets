@@ -126,6 +126,18 @@ func newTapeInfoCmd(deps Deps, flags *globalFlags) *cobra.Command {
 			rt.printf("magic       %s\n", info.Label.Magic)
 			rt.printf("version     %d\n", info.Label.FormatVersion)
 			rt.printf("formatted   %s\n", info.Label.FormattedAt)
+			rt.printf("TapeAlert\n")
+			if len(info.Alerts) == 0 {
+				rt.printf("  нет активных флагов\n")
+			} else {
+				for _, alert := range info.Alerts {
+					severity := "warn"
+					if alert.Critical {
+						severity = "critical"
+					}
+					rt.printf("  [%s] %s (код %d)\n", severity, alert.Name, alert.Code)
+				}
+			}
 			return nil
 		},
 	}

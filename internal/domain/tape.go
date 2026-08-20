@@ -67,4 +67,12 @@ func (l TapeLabel) ParseFormattedAt() (time.Time, error) {
 type TapeInfo struct {
 	Label    TapeLabel
 	Filemark int // сколько filemark'ов от начала ленты; -1 — неизвестно
+	Alerts   []TapeAlert
+}
+
+// TapeAlert — активный флаг диагностики привода по стандарту TapeAlert.
+type TapeAlert struct {
+	Name     string
+	Code     int
+	Critical bool
 }

@@ -32,8 +32,9 @@ import (
 
 // tapeInfoResponse — ответ GET /api/tape/info.
 type tapeInfoResponse struct {
-	Label    tapeLabelJSON `json:"label"`
-	Filemark int           `json:"filemark"`
+	Label    tapeLabelJSON      `json:"label"`
+	Filemark int                `json:"filemark"`
+	Alerts   []domain.TapeAlert `json:"alerts"`
 }
 
 // tapeLabelJSON — ярлык кассеты в JSON.
@@ -57,6 +58,10 @@ func (s *Server) handleTapeInfo(w http.ResponseWriter, r *http.Request) {
 		writeTapeErr(w, err, "tape_info")
 		return
 	}
+	alerts := info.Alerts
+	if alerts == nil {
+		alerts = []domain.TapeAlert{}
+	}
 	writeJSON(w, http.StatusOK, tapeInfoResponse{
 		Label: tapeLabelJSON{
 			Magic:         info.Label.Magic,
@@ -66,6 +71,7 @@ func (s *Server) handleTapeInfo(w http.ResponseWriter, r *http.Request) {
 			FormattedAt:   info.Label.FormattedAt,
 		},
 		Filemark: info.Filemark,
+		Alerts:   alerts,
 	})
 }
 

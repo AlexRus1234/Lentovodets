@@ -483,7 +483,7 @@ Intermasq):
 
 | Метод | Путь                  | Описание                                  |
 | ----- | --------------------- | ----------------------------------------- |
-| GET   | `/tape/info`          | прочитать `TapeLabel`                     |
+| GET   | `/tape/info`          | прочитать `TapeLabel` и активные TapeAlert-флаги привода |
 | POST  | `/tape/eject`         | извлечь                                   |
 | POST  | `/tape/format?name=&force=` | форматировать                       |
 

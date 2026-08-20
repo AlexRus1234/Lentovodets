@@ -58,13 +58,14 @@ func Dial(url, apiKey, username string, askPassword func() (string, error)) Serv
 // TapeInfo — GET /api/tape/info.
 func (c *HTTPClient) TapeInfo(ctx context.Context) (domain.TapeInfo, error) {
 	var resp struct {
-		Label    domain.TapeLabel `json:"label"`
-		Filemark int              `json:"filemark"`
+		Label    domain.TapeLabel   `json:"label"`
+		Filemark int                `json:"filemark"`
+		Alerts   []domain.TapeAlert `json:"alerts"`
 	}
 	if err := c.get(ctx, "/api/tape/info", &resp); err != nil {
 		return domain.TapeInfo{}, err
 	}
-	return domain.TapeInfo{Label: resp.Label, Filemark: resp.Filemark}, nil
+	return domain.TapeInfo{Label: resp.Label, Filemark: resp.Filemark, Alerts: resp.Alerts}, nil
 }
 
 // Eject — POST /api/tape/eject.
