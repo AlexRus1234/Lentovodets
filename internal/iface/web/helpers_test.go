@@ -58,20 +58,22 @@ func newFakeConfig() *fakeConfig {
 	}
 }
 
-func (c *fakeConfig) Jobs() ([]domain.Job, error) { return c.jobs, nil }
-func (c *fakeConfig) Device() string              { return c.device }
-func (c *fakeConfig) DB() string                  { return ":memory:" }
-func (c *fakeConfig) Log() string                 { return "test.log" }
-func (c *fakeConfig) Server() string              { return c.serverURL }
-func (c *fakeConfig) LogLevel() string            { return "info" }
-func (c *fakeConfig) Bind() string                { return c.bind }
-func (c *fakeConfig) WebUsername() string         { return c.username }
-func (c *fakeConfig) WebPasswordHash() string     { return c.passHash }
-func (c *fakeConfig) APIKey() string              { return c.apiKey }
-func (c *fakeConfig) SessionTTL() time.Duration   { return c.ttl }
-func (c *fakeConfig) RawTOML() (string, error)    { return c.tomlText, nil }
-func (c *fakeConfig) Capacity() (int64, error)    { return c.capacity, nil }
-func (c *fakeConfig) MinTail() (int64, error)     { return c.minTail, nil }
+func (c *fakeConfig) Jobs() ([]domain.Job, error)   { return c.jobs, nil }
+func (c *fakeConfig) Device() string                { return c.device }
+func (c *fakeConfig) DB() string                    { return ":memory:" }
+func (c *fakeConfig) Log() string                   { return "test.log" }
+func (c *fakeConfig) Server() string                { return c.serverURL }
+func (c *fakeConfig) LogLevel() string              { return "info" }
+func (c *fakeConfig) Bind() string                  { return c.bind }
+func (c *fakeConfig) WebUsername() string           { return c.username }
+func (c *fakeConfig) WebPasswordHash() string       { return c.passHash }
+func (c *fakeConfig) APIKey() string                { return c.apiKey }
+func (c *fakeConfig) SessionTTL() time.Duration     { return c.ttl }
+func (c *fakeConfig) WebhookURL() string            { return "" }
+func (c *fakeConfig) WebhookTimeout() time.Duration { return 10 * time.Second }
+func (c *fakeConfig) RawTOML() (string, error)      { return c.tomlText, nil }
+func (c *fakeConfig) Capacity() (int64, error)      { return c.capacity, nil }
+func (c *fakeConfig) MinTail() (int64, error)       { return c.minTail, nil }
 
 func (c *fakeConfig) AddJob(job domain.Job) error {
 	if err := job.Validate(); err != nil {

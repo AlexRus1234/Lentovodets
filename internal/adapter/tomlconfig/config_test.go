@@ -573,6 +573,11 @@ func TestWebKeys_ReadAndDefaults(t *testing.T) {
 	if got, want := cfg.SessionTTL(), time.Hour; got != want {
 		t.Errorf("SessionTTL = %v, want %v", got, want)
 	}
+	webhook, _ := newConfig(t, `webhook_url = "https://ntfy.example/topic"
+webhook_timeout = "3s"`)
+	if webhook.WebhookURL() != "https://ntfy.example/topic" || webhook.WebhookTimeout() != 3*time.Second {
+		t.Errorf("webhook config = %q, %v", webhook.WebhookURL(), webhook.WebhookTimeout())
+	}
 
 	def, _ := newConfig(t, "")
 	if def.Bind() != "127.0.0.1:29201" {
@@ -583,6 +588,9 @@ func TestWebKeys_ReadAndDefaults(t *testing.T) {
 	}
 	if got, want := def.SessionTTL(), 72*time.Hour; got != want {
 		t.Errorf("SessionTTL default = %v, want %v", got, want)
+	}
+	if def.WebhookURL() != "" || def.WebhookTimeout() != 10*time.Second {
+		t.Errorf("webhook defaults = %q, %v", def.WebhookURL(), def.WebhookTimeout())
 	}
 }
 

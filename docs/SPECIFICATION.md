@@ -602,6 +602,8 @@ web_password_hash = "$2a$..." # bcrypt; генерируется `lentovodec pas
 api_key = ""                 # опциональный ключ для скриптов (X-API-Key);
                              # пустой — отключён
 session_ttl = "72h"          # TTL сессий логина
+webhook_url = ""              # URL POST-уведомлений о завершении задач; пусто = выкл.
+webhook_timeout = "10s"       # таймаут одного запроса webhook
 
 # --- Планировщик частей spanning ---
 capacity = "2.2T"            # оценка ёмкости кассеты в байтах (человекочитаемая

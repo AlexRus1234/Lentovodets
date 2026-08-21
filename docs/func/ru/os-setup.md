@@ -139,12 +139,34 @@ install -m 0640 -o lentovodec -g lentovodec lentovodec.toml /etc/lentovodec/
 db    = "/var/lib/lentovodec/lentovodec.db"
 log   = "/var/lib/lentovodec/lentovodec.log"
 device = "/dev/nst0"
+webhook_url = "https://ntfy.sh/my-private-topic"
+webhook_timeout = "10s"
 ```
 
 Конфиг для демона — только чтение (запись заданий `jobs add` выполняйте
 от того же пользователя с правами записи в TOML). Секреты
 (`web_password_hash`, `api_key`) — только TOML с правами 0600, через env
 они не передаются.
+
+### Webhook о завершении задач
+
+После завершения backup или restore демон отправляет `POST` с JSON. Например:
+
+```json
+{"event":"task_finished","task_id":"task-ab12cd34","kind":"backup","state":"success","error":"","job":"media","bytes":123,"files":10,"tapes":["LTO-001"],"started_at":"2026-08-21T03:00:00Z","finished_at":"2026-08-21T03:12:00Z","version":"1.x"}
+```
+
+Для ntfy достаточно URL топика:
+
+```bash
+curl -X POST https://ntfy.sh/my-private-topic \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"task_finished","state":"success"}'
+```
+
+Секреты v1 в webhook не передаются: токен может быть частью URL. Храните TOML
+с правами `0600`. При сетевой ошибке или ответе не-2xx демон делает один
+повтор, затем пишет предупреждение; результат задачи не меняется.
 
 ---
 
