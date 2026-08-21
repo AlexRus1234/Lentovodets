@@ -39,35 +39,42 @@ func NewWebhookNotifier(url string, timeout time.Duration, log *slog.Logger) (fu
 				return
 			}
 			for attempt := 0; attempt < 2; attempt++ {
-				ctx, cancel := context.WithTimeout(context.Background(), timeout)
-				req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+				reqErr := postOnce(client, url, body, timeout)
 				if reqErr == nil {
-					req.Header.Set("Content-Type", "application/json; charset=utf-8")
-					resp, doErr := client.Do(req)
-					if doErr == nil {
-						if _, drainErr := io.Copy(io.Discard, resp.Body); drainErr != nil {
-							doErr = drainErr
-						}
-						if closeErr := resp.Body.Close(); closeErr != nil && doErr == nil {
-							doErr = closeErr
-						}
-						if doErr == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-							cancel()
-							return
-						}
-						if doErr == nil {
-							doErr = fmt.Errorf("HTTP %s", resp.Status)
-						}
-					}
-					reqErr = doErr
+					return
 				}
-				cancel()
 				if attempt == 1 {
 					log.Warn("webhook: delivery failed", "host", host, "error", reqErr.Error())
 				}
 			}
 		}()
 	}, nil
+}
+
+func postOnce(client *http.Client, rawURL string, body []byte, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	_, drainErr := io.Copy(io.Discard, resp.Body)
+	closeErr := resp.Body.Close()
+	if drainErr != nil {
+		return drainErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %s", resp.Status)
+	}
+	return nil
 }
 
 func webhookLogHost(raw string) string {
