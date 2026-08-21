@@ -218,10 +218,16 @@ func (t *Task) finishError(err error, now time.Time) {
 }
 
 func (t *Task) finishSnapshotLocked() TaskFinishSnapshot {
+	tapes := append([]string{}, t.tapes...)
+	bytes := t.bytes
+	if bytes == 0 {
+		// An error can happen after progress already counted a large transfer.
+		bytes = t.processed
+	}
 	return TaskFinishSnapshot{
 		Event: "task_finished", TaskID: t.ID, Kind: t.Kind, State: t.state,
-		Error: t.errText, Job: t.job, Bytes: t.bytes, Files: t.files,
-		Tapes: append([]string(nil), t.tapes...), StartedAt: t.startedAt,
+		Error: t.errText, Job: t.job, Bytes: bytes, Files: t.files,
+		Tapes: tapes, StartedAt: t.startedAt,
 		FinishedAt: t.finishedAt, Version: t.version,
 	}
 }

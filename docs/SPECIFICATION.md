@@ -541,6 +541,32 @@ task_running`; привод без кассеты (ENOMEDIUM) — `409 no_medium
 cancel-эндпоинт не вводится: отмена ожидающей задачи — остановка
 демона.
 
+При каждом терминальном переходе задачи (`success` или `error`, включая
+отмену `awaiting_tape` при graceful shutdown) демон опционально отправляет
+асинхронный HTTP `POST` webhook. Он включается непустым `webhook_url`; таймаут
+`webhook_timeout` действует на каждую попытку. При неудачной доставке выполняется
+один повтор, затем пишется предупреждение. Redirect не выполняется, доставка
+не изменяет результат задачи.
+
+Тело webhook (`Content-Type: application/json; charset=utf-8`):
+
+```json
+{
+  "event": "task_finished",
+  "task_id": "task-ab12cd34",
+  "kind": "backup",
+  "state": "success",
+  "error": "",
+  "job": "media",
+  "bytes": 123,
+  "files": 10,
+  "tapes": ["LTO-001", "LTO-002"],
+  "started_at": "2026-08-21T03:00:00Z",
+  "finished_at": "2026-08-21T03:12:00Z",
+  "version": "1.x"
+}
+```
+
 ### 6.5. Каталог
 
 | Метод | Путь                                  | Описание                            |
