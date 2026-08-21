@@ -65,8 +65,12 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		defer changer.finish() // финальная кассета цепочки; промежуточные закрывает changer
 		uc := backup.New(s.deps.Config, tape, s.deps.Codec, s.deps.Catalog,
 			s.deps.FS, s.deps.Hasher, s.deps.Rand, s.deps.Clock,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
-		if _, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full, Verify: verify}); err != nil {
+			NewDeferredTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
+		result, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full, Verify: verify})
+		if err == nil {
+			task.SetResult(jobName, result.Stats.Bytes, result.Stats.Added+result.Stats.Modified, result.Tapes)
+			task.finishSuccess(s.deps.Clock.Now())
+		} else {
 			task.finishError(err, s.deps.Clock.Now()) // идемпотентно после prog.Fail
 		}
 	})
@@ -121,15 +125,19 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 			fs = destfs.Wrap(s.deps.FS, dest)
 		}
 		uc := restore.New(tape, s.deps.Codec, s.deps.Catalog, fs,
-			NewTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
+			NewDeferredTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
+		var stats restore.Stats
 		if sessionID > 0 {
-			_, err = uc.Selective(s.ctx, sessionID, paths)
+			stats, err = uc.Selective(s.ctx, sessionID, paths)
 		} else if len(paths) > 0 {
-			_, err = uc.Smart(s.ctx, paths)
+			stats, err = uc.Smart(s.ctx, paths)
 		} else {
-			_, err = uc.Full(s.ctx)
+			stats, err = uc.Full(s.ctx)
 		}
-		if err != nil {
+		if err == nil {
+			task.SetResult("", 0, stats.Files, nil)
+			task.finishSuccess(s.deps.Clock.Now())
+		} else {
 			task.finishError(err, s.deps.Clock.Now()) // идемпотентно после prog.Fail
 		}
 	})

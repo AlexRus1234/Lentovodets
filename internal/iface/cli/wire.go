@@ -99,6 +99,10 @@ func newWebDaemon(opts DaemonOpts) (Daemon, error) {
 	if !ok {
 		return nil, errors.New("cli: конфигурация не удовлетворяет web.ServerConfig")
 	}
+	notifier, err := web.NewWebhookNotifier(cfg.WebhookURL(), cfg.WebhookTimeout(), opts.Logger)
+	if err != nil {
+		return nil, err
+	}
 	srv, err := web.NewServer(web.Deps{
 		Log:          opts.Logger,
 		Version:      opts.Version,
@@ -112,6 +116,7 @@ func newWebDaemon(opts DaemonOpts) (Daemon, error) {
 		Clock:        opts.Clock,
 		OpenTape:     opts.OpenTape,
 		BindOverride: opts.BindOverride,
+		OnTaskFinish: notifier,
 	})
 	if err != nil {
 		return nil, err

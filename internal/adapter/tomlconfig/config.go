@@ -46,19 +46,22 @@ const (
 	keyWebPasswordHash = "web_password_hash"
 	keyAPIKey          = "api_key"
 	keySessionTTL      = "session_ttl"
+	keyWebhookURL      = "webhook_url"
+	keyWebhookTimeout  = "webhook_timeout"
 	keyCapacity        = "capacity"
 	keyMinTail         = "min_tail"
 )
 
 // Значения по умолчанию (SPECIFICATION §5, §8).
 const (
-	defaultDevice     = "/dev/nst0"
-	defaultDB         = "lentovodec.db"
-	defaultLog        = "lentovodec.log"
-	defaultServer     = "http://127.0.0.1:29201"
-	defaultLogLevel   = "info"
-	defaultBind       = "127.0.0.1:29201"
-	defaultSessionTTL = "72h"
+	defaultDevice         = "/dev/nst0"
+	defaultDB             = "lentovodec.db"
+	defaultLog            = "lentovodec.log"
+	defaultServer         = "http://127.0.0.1:29201"
+	defaultLogLevel       = "info"
+	defaultBind           = "127.0.0.1:29201"
+	defaultSessionTTL     = "72h"
+	defaultWebhookTimeout = "10s"
 )
 
 // Config реализует port.ConfigSource (чтение) и port.ConfigEditor
@@ -126,6 +129,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault(keyBind, defaultBind)
 	v.SetDefault(keyWebUsername, "")
 	v.SetDefault(keySessionTTL, defaultSessionTTL)
+	v.SetDefault(keyWebhookURL, "")
+	v.SetDefault(keyWebhookTimeout, defaultWebhookTimeout)
 	v.SetDefault(keyCapacity, "")
 	v.SetDefault(keyMinTail, "")
 }
@@ -167,6 +172,18 @@ func (c *Config) SessionTTL() time.Duration {
 	d, err := time.ParseDuration(c.read.GetString(keySessionTTL))
 	if err != nil || d <= 0 {
 		return 72 * time.Hour
+	}
+	return d
+}
+
+// WebhookURL — URL для уведомлений о завершённых задачах; пустой URL отключает их.
+func (c *Config) WebhookURL() string { return strings.TrimSpace(c.file.GetString(keyWebhookURL)) }
+
+// WebhookTimeout — таймаут одного HTTP-запроса webhook.
+func (c *Config) WebhookTimeout() time.Duration {
+	d, err := time.ParseDuration(c.read.GetString(keyWebhookTimeout))
+	if err != nil || d <= 0 {
+		return 10 * time.Second
 	}
 	return d
 }

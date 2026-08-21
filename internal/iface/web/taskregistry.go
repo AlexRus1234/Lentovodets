@@ -73,6 +73,28 @@ type Task struct {
 	lastSample  time.Time
 	lastBytes   int64
 	speedBps    float64
+	job         string
+	bytes       int64
+	files       int
+	tapes       []string
+	onFinish    func(TaskFinishSnapshot)
+	version     string
+}
+
+// TaskFinishSnapshot — payload webhook о завершении фоновой задачи.
+type TaskFinishSnapshot struct {
+	Event      string    `json:"event"`
+	TaskID     string    `json:"task_id"`
+	Kind       string    `json:"kind"`
+	State      string    `json:"state"`
+	Error      string    `json:"error"`
+	Job        string    `json:"job"`
+	Bytes      int64     `json:"bytes"`
+	Files      int       `json:"files"`
+	Tapes      []string  `json:"tapes"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	Version    string    `json:"version"`
 }
 
 // taskProgressJSON — прогресс задачи по SPEC §6.4.
@@ -157,14 +179,20 @@ func (t *Task) update(u port.ProgressUpdate, now time.Time) {
 // finishSuccess фиксирует успешное завершение.
 func (t *Task) finishSuccess(now time.Time) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !t.finishableLocked() {
+		t.mu.Unlock()
 		return
 	}
 	t.state = taskSuccess
 	t.finishedAt = now
 	t.continueCh = nil
 	t.appendLogLocked("задача завершена успешно")
+	snapshot := t.finishSnapshotLocked()
+	onFinish := t.onFinish
+	t.mu.Unlock()
+	if onFinish != nil {
+		onFinish(snapshot)
+	}
 }
 
 // finishError фиксирует завершение с ошибкой. Допустима и отмена
@@ -172,8 +200,8 @@ func (t *Task) finishSuccess(now time.Time) {
 // кассеты, задача обязана завершиться, а не висеть до таймаута.
 func (t *Task) finishError(err error, now time.Time) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !t.finishableLocked() {
+		t.mu.Unlock()
 		return
 	}
 	t.state = taskError
@@ -181,6 +209,38 @@ func (t *Task) finishError(err error, now time.Time) {
 	t.continueCh = nil
 	t.errText = err.Error()
 	t.appendLogLocked("задача завершена ошибкой: " + t.errText)
+	snapshot := t.finishSnapshotLocked()
+	onFinish := t.onFinish
+	t.mu.Unlock()
+	if onFinish != nil {
+		onFinish(snapshot)
+	}
+}
+
+func (t *Task) finishSnapshotLocked() TaskFinishSnapshot {
+	tapes := append([]string{}, t.tapes...)
+	bytes := t.bytes
+	if bytes == 0 {
+		// An error can happen after progress already counted a large transfer.
+		bytes = t.processed
+	}
+	return TaskFinishSnapshot{
+		Event: "task_finished", TaskID: t.ID, Kind: t.Kind, State: t.state,
+		Error: t.errText, Job: t.job, Bytes: bytes, Files: t.files,
+		Tapes: tapes, StartedAt: t.startedAt,
+		FinishedAt: t.finishedAt, Version: t.version,
+	}
+}
+
+// SetResult сохраняет крупинки результата до завершения задачи.
+func (t *Task) SetResult(job string, bytes int64, files int, tapes []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if bytes == 0 {
+		bytes = t.processed
+	}
+	t.job, t.bytes, t.files = job, bytes, files
+	t.tapes = append([]string(nil), tapes...)
 }
 
 // finishableLocked — можно ли завершить задачу из текущего состояния.
@@ -240,13 +300,21 @@ func (t *Task) appendLogLocked(line string) {
 
 // taskProgress — port.ProgressReporter, пишущий в задачу.
 type taskProgress struct {
-	task  *Task
-	clock port.Clock
+	task      *Task
+	clock     port.Clock
+	deferDone bool
 }
 
 // NewTaskProgress создаёт репортёр прогресса для задачи.
 func NewTaskProgress(task *Task, clock port.Clock) port.ProgressReporter {
 	return &taskProgress{task: task, clock: clock}
+}
+
+// NewDeferredTaskProgress публикует прогресс, но оставляет успешную
+// финализацию вызывающему коду. Это нужно, когда webhook должен включить
+// Result use case, который вызывает Done до возврата Result.
+func NewDeferredTaskProgress(task *Task, clock port.Clock) port.ProgressReporter {
+	return &taskProgress{task: task, clock: clock, deferDone: true}
 }
 
 // Update публикует снимок прогресса.
@@ -256,6 +324,9 @@ func (p *taskProgress) Update(u port.ProgressUpdate) {
 
 // Done фиксирует успех.
 func (p *taskProgress) Done() {
+	if p.deferDone {
+		return
+	}
 	p.task.finishSuccess(p.clock.Now())
 }
 
@@ -266,14 +337,21 @@ func (p *taskProgress) Fail(err error) {
 
 // TaskRegistry — общий реестр задач демона.
 type TaskRegistry struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
-	wg    sync.WaitGroup
+	mu       sync.Mutex
+	tasks    map[string]*Task
+	wg       sync.WaitGroup
+	onFinish func(TaskFinishSnapshot)
+	version  string
 }
 
 // NewTaskRegistry создаёт пустой реестр.
 func NewTaskRegistry() *TaskRegistry {
 	return &TaskRegistry{tasks: make(map[string]*Task)}
+}
+
+// NewTaskRegistryWithFinish создаёт реестр с callback завершения задач.
+func NewTaskRegistryWithFinish(version string, onFinish func(TaskFinishSnapshot)) *TaskRegistry {
+	return &TaskRegistry{tasks: make(map[string]*Task), version: version, onFinish: onFinish}
 }
 
 // StartIfIdle регистрирует новую задачу и запускает fn в фоновой
@@ -311,6 +389,8 @@ func (r *TaskRegistry) startLocked(id, kind string) *Task {
 		state:     taskRunning,
 		phase:     port.PhaseScan,
 		startedAt: time.Now(),
+		onFinish:  r.onFinish,
+		version:   r.version,
 	}
 	r.tasks[id] = task
 	return task

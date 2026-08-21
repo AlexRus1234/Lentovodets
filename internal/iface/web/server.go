@@ -50,6 +50,8 @@ type ServerConfig interface {
 	WebPasswordHash() string
 	APIKey() string
 	SessionTTL() time.Duration
+	WebhookURL() string
+	WebhookTimeout() time.Duration
 	RawTOML() (string, error)
 }
 
@@ -75,6 +77,9 @@ type Deps struct {
 
 	// BindOverride — адрес из флагов CLI ("host:port"); "" — из конфига.
 	BindOverride string
+
+	// OnTaskFinish получает снимок завершённой задачи.
+	OnTaskFinish func(TaskFinishSnapshot)
 }
 
 // Server — HTTP-демон lentovodec.
@@ -123,7 +128,7 @@ func NewServer(deps Deps) (*Server, error) {
 	s := &Server{
 		deps:   deps,
 		auth:   auth,
-		tasks:  NewTaskRegistry(),
+		tasks:  NewTaskRegistryWithFinish(deps.Version, deps.OnTaskFinish),
 		bind:   bind,
 		ctx:    ctx,
 		cancel: cancel,
