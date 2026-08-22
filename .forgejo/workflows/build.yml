@@ -11,6 +11,16 @@ on:
         required: true
         default: false
         type: boolean
+      publish_github:
+        description: "Create GitHub Release and upload binary assets?"
+        required: true
+        default: false
+        type: boolean
+      publish_codeberg:
+        description: "Create Codeberg Release and upload binary assets?"
+        required: true
+        default: false
+        type: boolean
       version_tag:
         description: "Fallback version when HEAD has no exact v* tag."
         required: false
@@ -214,6 +224,65 @@ jobs:
               "$API/releases/${RELEASE_ID}/assets?name=${FILE}"
           done
           echo "Published local Forgejo Release ${VERSION}"
+
+      - name: Publish GitHub Release
+        if: success() && github.event.inputs.publish_github == 'true'
+        env:
+          RELEASE_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+        run: |
+          if [ "$EXACT_TAG" != "$VERSION" ]; then
+            echo "::error::GitHub Release requires HEAD to have the exact tag $VERSION"
+            exit 1
+          fi
+          ARTIFACT_NAME="lentovodets-${VERSION}-linux-amd64"
+          PUBLISH_FILES="$ARTIFACT_NAME ${ARTIFACT_NAME}.sha256"
+          echo "Files to publish: $PUBLISH_FILES"
+          API="https://api.github.com/repos/AlexRus1234/Lentovodets"
+          BODY="$(jq -n --arg tag "$VERSION" '{tag_name:$tag, name:$tag, draft:false, prerelease:($tag | test("-"))}')"
+          RELEASE="$(curl -fsSL -X POST \
+            -H "Authorization: Bearer ${RELEASE_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' \
+            "$API/releases" -d "$BODY")"
+          UPLOAD_URL="$(jq -r '.upload_url' <<<"$RELEASE" | sed 's/{?name,label}//')"
+          test -n "$UPLOAD_URL" && test "$UPLOAD_URL" != "null"
+          for FILE in $PUBLISH_FILES; do
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${RELEASE_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'Content-Type: application/octet-stream' \
+              --data-binary "@${FILE}" \
+              "${UPLOAD_URL}?name=${FILE}"
+          done
+          echo "Published GitHub Release ${VERSION} (files: $PUBLISH_FILES)"
+
+      - name: Publish Codeberg Release
+        if: success() && github.event.inputs.publish_codeberg == 'true'
+        env:
+          RELEASE_TOKEN: ${{ secrets.TOKEN_CODEBERG }}
+        run: |
+          if [ "$EXACT_TAG" != "$VERSION" ]; then
+            echo "::error::Codeberg Release requires HEAD to have the exact tag $VERSION"
+            exit 1
+          fi
+          ARTIFACT_NAME="lentovodets-${VERSION}-linux-amd64"
+          PUBLISH_FILES="$ARTIFACT_NAME ${ARTIFACT_NAME}.sha256"
+          echo "Files to publish: $PUBLISH_FILES"
+          API="https://codeberg.org/api/v1/repos/AlexRus1234/Lentovodets"
+          BODY="$(jq -n --arg tag "$VERSION" '{tag_name:$tag, name:$tag, draft:false, prerelease:($tag | test("-"))}')"
+          RELEASE="$(curl -fsSL -X POST \
+            -H "Authorization: token ${RELEASE_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            "$API/releases" -d "$BODY")"
+          RELEASE_ID="$(jq -r '.id' <<<"$RELEASE")"
+          test -n "$RELEASE_ID" && test "$RELEASE_ID" != "null"
+          for FILE in $PUBLISH_FILES; do
+            curl -fsSL -X POST \
+              -H "Authorization: token ${RELEASE_TOKEN}" \
+              -F "attachment=@${FILE}" \
+              "$API/releases/${RELEASE_ID}/assets?name=${FILE}"
+          done
+          echo "Published Codeberg Release ${VERSION} (files: $PUBLISH_FILES)"
 
       - name: Cleanup
         if: always()
