@@ -18,6 +18,7 @@ package domain_test
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -479,8 +480,17 @@ func TestGroupKey(t *testing.T) {
 		{"/a/b/c", []string{"/a", "/a/b"}, 1, "/a/b/c"},
 		{"/a/b/c/d", []string{"/a", "/a/b"}, 1, "/a/b/c"},
 		{"/a/b/c/d", []string{"/a", "/a/b"}, 2, "/a/b/c/d"},
-		// нормализация: обратные слэши (Windows) канонизируются
-		{`C:\data\media\movies`, []string{`C:\data`}, 1, "C:/data/media"},
+	}
+	if runtime.GOOS == "windows" {
+		// нормализация обратных слэшей — платформенное поведение
+		// filepath.ToSlash; на Linux обратный слэш — часть имени,
+		// кейс там не воспроизводим по построению
+		cases = append(cases, struct {
+			path  string
+			roots []string
+			depth int32
+			want  string
+		}{`C:\data\media\movies`, []string{`C:\data`}, 1, "C:/data/media"})
 	}
 	for _, tc := range cases {
 		if got := domain.GroupKey(tc.path, tc.roots, tc.depth); got != tc.want {
