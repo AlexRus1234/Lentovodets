@@ -11,7 +11,13 @@ import (
 )
 
 // TestTapeAlerts печатает активные TapeAlert-флаги реального привода.
-// Запуск: LENTOVODEC_TAPE_DIAG=1 go test -tags=tape ./test/hardware -run TestTapeAlerts -v.
+// Кассета не нужна (лог-страницы привода), но нужен CAP_SYS_RAWIO:
+// LOG SENSE не в kernel-whitelist SG_IO для непривилегированных
+// (EPERM под обычным пользователем; живой прогон SKLD00 —
+// логи/стенд-arch-skld00.md). Запуск:
+//
+//	sudo env LENTOVODEC_TAPE_DIAG=1 LENTOVODEC_TAPE_DEVICE=/dev/nst0 \
+//	  "$(command -v go)" test -tags=tape ./test/hardware -run TestTapeAlerts -v
 func TestTapeAlerts(t *testing.T) {
 	if os.Getenv("LENTOVODEC_TAPE_DIAG") == "" {
 		t.Skip("диагностика выключена: LENTOVODEC_TAPE_DIAG=1")

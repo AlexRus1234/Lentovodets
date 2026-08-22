@@ -288,6 +288,7 @@ LENTOVODEC_TAPE_DEVICE=/dev/nst0 go test -tags tape ./test/hardware/...
    `make build` — «pattern assets: no matching files found»: каталог
    `internal/iface/web/assets/` в свежем клоне не существует, его создаёт
    только Vite-сборка (`make web-build` обязателен до `make build`).
-3. **`mt` — пакет `mt-st`**: в базовой поставке утилиты нет
-   (`mt: command not found`).
+3. **`mt` — пакет `mt-st`, только в AUR** (`yay -S mt-st`; в базовой
+   поставке утилиты нет), бинарь называется `mt-st`, а не `mt`:
+   `mt-st -f /dev/nst0 status`.
 4. **`dmesg` читается только root**: `sudo dmesg | grep -i st`.
