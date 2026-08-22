@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 
-**Русский**
+**Русский** | [English](README.en.md) |
 
 <div align="center">
 
@@ -323,7 +323,7 @@ ssh -L 29201:127.0.0.1:29201 lentovodec@server
 │   ├── integration/         # Сквозные сценарии на реальных адаптерах (без железа)
 │   └── hardware/            # //go:build tape — прогон на реальном стримере
 ├── web/                     # Исходники Vue 3 + Vite (бандл → iface/web/assets)
-├── docs/                    # func/ru/ — пользовательская документация;
+├── docs/                    # func/ru/ и func/EN/ — пользовательская документация;
 │                            # ARCHITECTURE/SPECIFICATION/FORMAT/… — для разработки
 ├── .forgejo/workflows/      # CI: сборка, тесты, публикация релиза
 ├── LICENSE                  # GNU GPL v3

@@ -54,10 +54,11 @@ jobs:
           echo "Добавление отметки о зеркале в README..."
           printf '%s\n' '> **Это зеркало репозитория. Оригинал находится по адресу:**' '> [https://git.alexrus1234.ru/AlexRus1234/Lentovodets](https://git.alexrus1234.ru/AlexRus1234/Lentovodets)' '' > /tmp/mirror-notice-ru
           printf '%s\n' '> **This is a mirror repository. The original is available at:**' '> [https://git.alexrus1234.ru/AlexRus1234/Lentovodets](https://git.alexrus1234.ru/AlexRus1234/Lentovodets)' '' > /tmp/mirror-notice-en
-          cat /tmp/mirror-notice-ru /tmp/mirror-notice-en README.md > README.md.tmp && mv README.md.tmp README.md
+          cat /tmp/mirror-notice-ru README.md > README.md.tmp && mv README.md.tmp README.md
+          cat /tmp/mirror-notice-en README.en.md > README.en.md.tmp && mv README.en.md.tmp README.en.md
           git config user.name "Forgejo mirror"
           git config user.email "forgejo-mirror@localhost"
-          git add README.md
+          git add README.md README.en.md
           git commit -m "docs: mark repository as a mirror"
 
       - name: Отправка на GitHub

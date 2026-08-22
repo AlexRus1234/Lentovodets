@@ -31,6 +31,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | [os-setup.md](os-setup.md) | Развёртывание в Linux: rootless-модель, группа `tape`, udev, systemd-юнит, сетевой доступ. |
 | [tape-format.md](tape-format.md) | Формат ленты глазами оператора: ярлык, сессии, filemark'и, совместимость. |
 
+Английская документация — в каталоге [`docs/func/EN/`](../EN/README.md).
+
 Внутренняя документация разработки — в каталоге [`docs/`](../../):
 `ARCHITECTURE.md` (слои и правила импортов), `SPECIFICATION.md`
 (полные требования и схемы), `FORMAT.md` (байтовый канон формата),
