@@ -21,11 +21,14 @@
 // бекап делится на части, смена кассеты по промпту, восстановление цепочки.
 //
 // Запуск (две чистые кассеты, машина с приводом, терминал, пользователь
-// в группе tape):
+// в группе tape). ВАЖНО: `go test` подключает бинарню stdin от /dev/null —
+// промпты оператора не работают; сначала компилируем, потом запускаем
+// бинарню напрямую:
 //
+//	go test -c -tags=tape -o hw.test ./test/hardware/
 //	LENTOVODEC_TAPE_DEVICE=/dev/nst0 \
 //	LENTOVODEC_TAPE_SPAN_CAPACITY=64M \
-//	go test -tags=tape ./test/hardware/ -v -count=1 -run TestHardware_SpanningTwoTapes
+//	./hw.test -test.v -test.count=1 -test.run TestHardware_SpanningTwoTapes
 //
 // LENTOVODEC_TAPE_SPAN_CAPACITY — оценка ёмкости для планировщика
 // (по умолчанию 64M): общий объём данных должен её превышать, реальная
@@ -167,13 +170,22 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 	// Changer бекапа: извлечь закрытую кассету, спросить оператора,
 	// открыть устройство и отформатировать чистую кассету предложенным
 	// именем (HW-SPAN-1 → HW-SPAN-2).
+	//
+	// hwEjectClose извлекает И закрывает кассету: без eject оператор не
+	// вынет её из привода, а незакрытый O_RDWR-fd драйвера st блокирует
+	// следующий linuxtape.Open ошибкой EBUSY (устройство одно). Usecase
+	// финальную кассету запуска не закрывает (это делает вызывающий:
+	// CLI — закрытием при выходе), поэтому кассеты, открытые через
+	// Request, запоминаются и извлекаются тестом на границах фаз.
+	hwEjectClose := func(ctx context.Context, tape port.Tape) error {
+		if err := tape.Eject(ctx); err != nil {
+			return fmt.Errorf("извлечение кассеты: %w", err)
+		}
+		return tape.Close()
+	}
+	var backupLast, readLast port.Tape
 	backupChanger := &testutil.FuncChanger{
-		Close: func(ctx context.Context, tape port.Tape) error {
-			if err := tape.Eject(ctx); err != nil {
-				return fmt.Errorf("извлечение кассеты: %w", err)
-			}
-			return tape.Close()
-		},
+		Close: hwEjectClose,
 		Request: func(ctx context.Context, req port.NextTapeRequest) (port.Tape, domain.TapeLabel, error) {
 			hwPrompt(t, "Кассета %s закрыта. Извлеките её, вставьте ЧИСТУЮ кассету и нажмите Enter: ",
 				req.FinishedTape)
@@ -181,6 +193,7 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 			if err != nil {
 				return nil, domain.TapeLabel{}, err
 			}
+			backupLast = nt
 			nl, err := format.New(nt, codec, cat, rnd, clock, testutil.NoopLogger()).
 				Format(ctx, req.NextTapeName, false)
 			if err != nil {
@@ -206,9 +219,16 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 	}
 	t.Logf("backup: частей %d на кассетах %v", res.Parts, res.Tapes)
 
+	// Финальная кассета бекапа осталась открытой usecase'ом — извлечь и
+	// освободить устройство (дальше readtest потребует открыть кассету 1).
+	if err := hwEjectClose(ctx, backupLast); err != nil {
+		t.Fatalf("закрытие кассеты %s после бекапа: %v", res.Tapes[len(res.Tapes)-1], err)
+	}
+
 	// Changer чтения: оператора просят вставить конкретную кассету цепочки
 	// (имя известно из указателя продолжения), кассета не форматируется.
 	readChanger := &testutil.FuncChanger{
+		Close: hwEjectClose,
 		Request: func(ctx context.Context, req port.NextTapeRequest) (port.Tape, domain.TapeLabel, error) {
 			hwPrompt(t, "Вставьте кассету %s (часть %d) и нажмите Enter: ",
 				req.NextTapeName, req.Part)
@@ -216,6 +236,7 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 			if err != nil {
 				return nil, domain.TapeLabel{}, err
 			}
+			readLast = nt
 			nl, err := hwReadLabel(ctx, nt, codec)
 			if err != nil {
 				_ = nt.Close()
@@ -244,6 +265,12 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 		if rep.Sessions != 1 || rep.Files != 1 {
 			t.Errorf("readtest %s: %+v; хочу 1 сессию с 1 файлом", rep.Name, rep)
 		}
+	}
+
+	// Последняя кассета readtest открыта через changer — извлечь и
+	// освободить устройство перед restore (снова нужна кассета 1).
+	if err := hwEjectClose(ctx, readLast); err != nil {
+		t.Fatalf("закрытие кассеты после readtest: %v", err)
 	}
 
 	t.Log("restore full по цепочке...")
