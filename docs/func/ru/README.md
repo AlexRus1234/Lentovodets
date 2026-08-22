@@ -34,5 +34,4 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 Внутренняя документация разработки — в каталоге [`docs/`](../../):
 `ARCHITECTURE.md` (слои и правила импортов), `SPECIFICATION.md`
 (полные требования и схемы), `FORMAT.md` (байтовый канон формата),
-`TESTING.md` (стратегия тестирования), `ROADMAP.md` (история этапов),
-`CHANGELOG.md` (изменения между релизами).
+`TESTING.md` (стратегия тестирования), `ROADMAP.md` (история этапов).

@@ -375,7 +375,6 @@ Fresh clone: сначала `make web-build` (бандл встраиваетс�
 3. [docs/FORMAT.md](docs/FORMAT.md) — канон двоичного формата ленты.
 4. [docs/TESTING.md](docs/TESTING.md) — стратегия тестирования.
 5. [docs/ROADMAP.md](docs/ROADMAP.md) — план и история этапов.
-6. [docs/CHANGELOG.md](docs/CHANGELOG.md) — изменения между релизами.
 
 ---
 
