@@ -38,6 +38,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 </div>
 
+> **Кассеты не привязаны к Лентоводцу.** Каждая кассета — обычный
+> tar-архив: на любой Unix-машине с LTO-стримером он читается голым GNU
+> tar без Лентоводца и его каталога:
+>
+> ```bash
+> mt -f /dev/nst0 rewind && mt -f /dev/nst0 fsf 2   # за ярлыком и индексом сессии
+> dd if=/dev/nst0 bs=256k | tar -x                  # данные кассеты
+> ```
+>
+> Лентоводец лишь добавляет сверху каталог, инкрементальные сессии,
+> многотомные цепочки и сверку xxhash64 (рецепт DR —
+> [`docs/func/ru/tape-format.md`](docs/func/ru/tape-format.md)).
+
 ---
 
 ## Содержание

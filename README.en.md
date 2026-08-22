@@ -39,6 +39,19 @@ are needed.
 
 </div>
 
+> **Cartridges are not tied to Lentovodets.** Every cartridge is a
+> plain tar archive: on any Unix machine with an LTO drive it is read
+> by bare GNU tar, without Lentovodets and its catalog:
+>
+> ```bash
+> mt -f /dev/nst0 rewind && mt -f /dev/nst0 fsf 2   # past the label and session index
+> dd if=/dev/nst0 bs=256k | tar -x                  # the cartridge data
+> ```
+>
+> Lentovodets merely adds a catalog, incremental sessions, multi-volume
+> chains, and xxhash64 verification on top (the DR recipe —
+> [`docs/func/EN/tape-format.md`](docs/func/EN/tape-format.md)).
+
 ---
 
 ## Contents
