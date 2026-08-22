@@ -184,7 +184,8 @@ func TestRestore_FullSkipsDamagedSession(t *testing.T) {
 	h.addSession(t, 1, []domain.FileMeta{meta("/a")})
 	h.addSession(t, 3, []domain.FileMeta{meta("/c")})
 	// вторая прочитанная сессия повреждена: пропуск и продолжение
-	h.codec.ErrReadOnce = errors.New("tapeformat: файл /b повреждён: хеш индекса не совпал")
+	h.codec.ErrReadOnce = errors.Join(&domain.SessionDamageError{},
+		errors.New("tapeformat: файл /b повреждён: хеш индекса не совпал"))
 	h.codec.ErrReadOn = 2
 
 	st, err := h.uc.Full(context.Background())
@@ -273,7 +274,7 @@ func TestRestore_Selective(t *testing.T) {
 
 func TestRestore_SelectiveSessionNotFound(t *testing.T) {
 	h := newHarness(t)
-	_, err := h.uc.Selective(context.Background(), 999, nil)
+	_, err := h.uc.Selective(context.Background(), 999, []string{"/a"})
 	if !errors.Is(err, &domain.SessionNotFoundError{SessionID: 999}) {
 		t.Fatalf("Selective: %v; want SessionNotFoundError", err)
 	}
@@ -293,6 +294,75 @@ func TestRestore_SelectiveUnderRoot(t *testing.T) {
 	}
 	if st.Files != 2 {
 		t.Fatalf("Files = %d; want 2 (весь каталог /etc)", st.Files)
+	}
+}
+
+// TestRestore_SelectiveWritesOnlyRequested — в dest попадают только
+// запрошенные пути, а не вся сессия (SPEC §4.3, шаг 4).
+func TestRestore_SelectiveWritesOnlyRequested(t *testing.T) {
+	h := newHarness(t)
+	h.codec.WriteToDest = true
+	id := h.addSession(t, 1, []domain.FileMeta{
+		{Path: "/etc", IsDir: true, State: domain.StateAdded},
+		meta("/etc/hosts"),
+		meta("/var/log"),
+	})
+	st, err := h.uc.Selective(context.Background(), id, []string{"/etc/hosts"})
+	if err != nil {
+		t.Fatalf("Selective: %v", err)
+	}
+	if st.Files != 1 || st.Skipped != 2 {
+		t.Fatalf("stats = files %d, skipped %d; want 1, 2", st.Files, st.Skipped)
+	}
+	if _, err := h.dest.Stat("/etc/hosts"); err != nil {
+		t.Fatalf("запрошенный файл не восстановлен: %v", err)
+	}
+	if _, err := h.dest.Stat("/var/log"); err == nil {
+		t.Error("незапрошенный файл не должен попадать в dest")
+	}
+}
+
+// TestRestore_SmartWritesOnlyRequested — smart пишет только искомые
+// пути даже при чтении целых сессий.
+func TestRestore_SmartWritesOnlyRequested(t *testing.T) {
+	h := newHarness(t)
+	h.codec.WriteToDest = true
+	h.addSession(t, 1, []domain.FileMeta{meta("/a"), meta("/b")})
+	st, err := h.uc.Smart(context.Background(), []string{"/a"})
+	if err != nil {
+		t.Fatalf("Smart: %v", err)
+	}
+	if st.Files != 1 {
+		t.Fatalf("Files = %d; want 1", st.Files)
+	}
+	if _, err := h.dest.Stat("/a"); err != nil {
+		t.Fatalf("искомый файл не восстановлен: %v", err)
+	}
+	if _, err := h.dest.Stat("/b"); err == nil {
+		t.Error("посторонний файл сессии не должен попадать в dest")
+	}
+}
+
+// TestRestore_SmartVisitsSessionsNewestFirst — сессии обходятся
+// глобально по убыванию номера, а не конкатенацией списков путей:
+// старая копия пути /a (сессия 1) не читается раньше свежей сессии 2
+// с копией пути /b.
+func TestRestore_SmartVisitsSessionsNewestFirst(t *testing.T) {
+	h := newHarness(t)
+	// очередь кодека — в порядке ожидаемого обхода: сессия 2, затем 1
+	h.addSession(t, 2, []domain.FileMeta{meta("/b")})
+	h.addSession(t, 1, []domain.FileMeta{meta("/a")})
+
+	st, err := h.uc.Smart(context.Background(), []string{"/a", "/b"})
+	if err != nil {
+		t.Fatalf("Smart: %v", err)
+	}
+	if st.Files != 2 {
+		t.Fatalf("Files = %d; want 2", st.Files)
+	}
+	// MTFSF(2*2-1)=3 для сессии 2, затем MTFSF(2*1-1)=1 для сессии 1
+	if len(h.tape.fsf) != 2 || h.tape.fsf[0] != 3 || h.tape.fsf[1] != 1 {
+		t.Errorf("ForwardFilemarks args = %v; want [3 1] (сначала свежая сессия)", h.tape.fsf)
 	}
 }
 
@@ -326,7 +396,8 @@ func TestRestore_SmartFallsBackToOlderCopy(t *testing.T) {
 	h.addSession(t, 1, []domain.FileMeta{meta("/etc/hosts")})
 	h.addSession(t, 2, []domain.FileMeta{meta("/etc/hosts")})
 	// новейшая копия (первое чтение) повреждена — читается старая
-	h.codec.ErrReadOnce = errors.New("tapeformat: файл /etc/hosts повреждён: хеш")
+	h.codec.ErrReadOnce = errors.Join(&domain.SessionDamageError{},
+		errors.New("tapeformat: файл /etc/hosts повреждён: хеш"))
 	h.codec.ErrReadOn = 1
 
 	st, err := h.uc.Smart(context.Background(), []string{"/etc/hosts"})
@@ -425,7 +496,7 @@ func TestRestore_ErrorPaths(t *testing.T) {
 				h.uc = restore.New(h.tape, h.codec, &failCat{listSessions: boom}, h.dest, nil, testutil.NoopLogger(), nil)
 			},
 			call: func(h *harness) error {
-				_, err := h.uc.Selective(context.Background(), h.selectiveID, nil)
+				_, err := h.uc.Selective(context.Background(), h.selectiveID, []string{"/a"})
 				return err
 			},
 		},
@@ -437,7 +508,7 @@ func TestRestore_ErrorPaths(t *testing.T) {
 				h.tape.fsfErr = boom
 			},
 			call: func(h *harness) error {
-				_, err := h.uc.Selective(context.Background(), h.selectiveID, nil)
+				_, err := h.uc.Selective(context.Background(), h.selectiveID, []string{"/a"})
 				return err
 			},
 		},
@@ -449,7 +520,7 @@ func TestRestore_ErrorPaths(t *testing.T) {
 				h.codec.ErrRead = boom
 			},
 			call: func(h *harness) error {
-				_, err := h.uc.Selective(context.Background(), h.selectiveID, nil)
+				_, err := h.uc.Selective(context.Background(), h.selectiveID, []string{"/a"})
 				return err
 			},
 		},
@@ -519,7 +590,8 @@ func TestRestore_FullForeignLabel(t *testing.T) {
 func TestRestore_FullSkipHitsTapeEnd(t *testing.T) {
 	// одна метка на ленте: повреждённая сессия + исчерпание меток
 	codec := &testutil.FakeCodec{}
-	codec.ErrReadOnce = errors.New("tapeformat: файл /x повреждён: хеш")
+	codec.ErrReadOnce = errors.Join(&domain.SessionDamageError{},
+		errors.New("tapeformat: файл /x повреждён: хеш"))
 	codec.ErrReadOn = 1
 	tape := &recTape{FakeTape: testutil.NewFakeTape()}
 	label := domain.TapeLabel{

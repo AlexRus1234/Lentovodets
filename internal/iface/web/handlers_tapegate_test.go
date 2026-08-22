@@ -23,6 +23,7 @@ package web_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"lentovodec/internal/domain"
 	"lentovodec/internal/iface/web"
 	"lentovodec/internal/port"
 )
@@ -116,13 +118,14 @@ func TestTapeOps_ConcurrentNoOverlappingOpen(t *testing.T) {
 	}
 }
 
-// TestTape_NoMedium409 — ENOMEDIUM (привод без кассеты) показывается
+// TestTape_NoMedium409 — ENOMEDIUM (привод без кассеты; адаптер
+// linuxtape типизирует его в *domain.NoMediumError) показывается
 // понятным текстом с code=no_medium вместо сырого errno.
 func TestTape_NoMedium409(t *testing.T) {
 	env := newEnv(t, func(deps *web.Deps, _ *testEnv) {
 		deps.OpenTape = func(string) (port.Tape, error) {
-			return nil, fmt.Errorf(
-				"linuxtape: открытие /dev/nst0: open /dev/nst0: no medium found")
+			return nil, errors.Join(&domain.NoMediumError{}, fmt.Errorf(
+				"linuxtape: открытие /dev/nst0: open /dev/nst0: no medium found"))
 		}
 	})
 

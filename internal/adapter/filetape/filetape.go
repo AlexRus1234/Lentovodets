@@ -27,6 +27,7 @@ package filetape
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -321,9 +322,12 @@ func (t *Tape) appendLocked(rec []byte) error {
 		}
 		cost := recordCost(rec)
 		if base+cost > t.capacity {
-			return fmt.Errorf(
+			// Контракт ENOSPC настоящего стримера — типизированной
+			// ошибкой: usecase-слои ловят errors.As(*TapeFullError),
+			// без разбора текста (конвенция закреплена в domain).
+			return errors.Join(&domain.TapeFullError{Capacity: t.capacity}, fmt.Errorf(
 				"filetape: no space left on device: лимит %d байт: использовано %d, запись требует ещё %d",
-				t.capacity, base, cost)
+				t.capacity, base, cost))
 		}
 	}
 	if t.pos < t.size {

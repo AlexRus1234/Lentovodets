@@ -36,6 +36,7 @@ import (
 	"lentovodec/internal/adapter/tapeformat"
 	"lentovodec/internal/adapter/tomlconfig"
 	"lentovodec/internal/adapter/xxhash"
+	"lentovodec/internal/domain"
 	"lentovodec/internal/iface/web"
 	"lentovodec/internal/port"
 )
@@ -143,10 +144,9 @@ func (d *webDaemon) Run(ctx context.Context) error {
 }
 
 // friendlyTapeError превращает типовые ошибки устройства в подсказки
-// оператору: EACCES/ENOENT — rootless-модель (SPEC §9.1), ENOMEDIUM —
-// нет кассеты, EBUSY — устройство занято другим процессом (например,
-// демоном). Строковая проверка errno — конвенция проекта (см.
-// mapTapeFull в usecase/backup): iface не импортирует syscall.
+// оператору: EACCES/ENOENT — rootless-модель (SPEC §9.1), ENOMEDIUM
+// (типизирован адаптером linuxtape) — нет кассеты, EBUSY — устройство
+// занято другим процессом (например, демоном).
 func friendlyTapeError(err error, device string) error {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
@@ -157,7 +157,7 @@ func friendlyTapeError(err error, device string) error {
 		return fmt.Errorf(
 			"устройство %s не найдено (%w)\nподсказка: проверьте, что стример подключён и устройство существует (ls /dev/nst*)",
 			device, err)
-	case strings.Contains(err.Error(), "no medium found"):
+	case errors.As(err, new(*domain.NoMediumError)):
 		return fmt.Errorf("нет кассеты в приводе (%w)\nподсказка: вставьте кассету и повторите", err)
 	case strings.Contains(err.Error(), "device or resource busy"):
 		return fmt.Errorf(

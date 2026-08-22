@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"lentovodec/internal/domain"
@@ -96,7 +97,7 @@ func (uc *UseCase) Full(ctx context.Context) (Stats, error) {
 		if err := ctx.Err(); err != nil {
 			return total, fmt.Errorf("restore full: %w", err)
 		}
-		files, err := uc.codec.ReadSession(ctx, cur.Tape, uc.fs, uc.prog)
+		files, err := uc.codec.ReadSession(ctx, cur.Tape, uc.fs, nil, uc.prog)
 		var empty *domain.EmptyIndexError
 		if errors.As(err, &empty) {
 			break // EOD: сессии закончились
@@ -149,7 +150,11 @@ func (uc *UseCase) followChain(ctx context.Context, cur TapeState, cont *domain.
 	return f.Follow(ctx, cur, cont)
 }
 
-// Selective восстанавливает выбранные пути из сессии sessionID.
+// Selective восстанавливает выбранные пути из сессии sessionID: на ФС
+// пишутся только запрошенные пути и их поддеревья, остальные записи
+// сессии читаются и проверяются по хешам, но не извлекаются. Пустые
+// paths — вся сессия (задокументированное поведение REST API:
+// session_id без paths).
 // dest nil/"" — восстановление по исходным путям из индекса.
 // Файл части spanning-цепочки лежит целиком на кассете своей части:
 // позиционирование идёт в пределах установленной ленты, и если
@@ -176,11 +181,15 @@ func (uc *UseCase) Selective(ctx context.Context, sessionID int64, paths []strin
 	if err := uc.positionToSession(ctx, target.Num); err != nil {
 		return Stats{}, err
 	}
-	files, err := uc.codec.ReadSession(ctx, uc.tape, uc.fs, uc.prog)
+	want := setOf(paths)
+	var include func(string) bool
+	if len(want) > 0 {
+		include = wantPredicate(want)
+	}
+	files, err := uc.codec.ReadSession(ctx, uc.tape, uc.fs, include, uc.prog)
 	if err != nil {
 		return Stats{}, fmt.Errorf("restore selective: чтение сессии %d: %w", sessionID, err)
 	}
-	want := setOf(paths)
 	st := Stats{Files: countFiles(files, want), Dirs: countDirs(files)}
 	for _, fm := range files {
 		if len(want) > 0 && !want[fm.Path] && !underAny(fm.Path, want) {
@@ -228,7 +237,8 @@ func (uc *UseCase) Smart(ctx context.Context, paths []string) (Stats, error) {
 				slog.String("error", err.Error()))
 			continue
 		}
-		files, readErr := uc.codec.ReadSession(ctx, uc.tape, uc.fs, uc.prog)
+		want := setOf(remaining)
+		files, readErr := uc.codec.ReadSession(ctx, uc.tape, uc.fs, wantPredicate(want), uc.prog)
 		if readErr != nil {
 			uc.log.Warn("smart: копия не читается",
 				slog.Int64("session_id", group.id),
@@ -236,9 +246,9 @@ func (uc *UseCase) Smart(ctx context.Context, paths []string) (Stats, error) {
 				slog.String("error", readErr.Error()))
 			continue
 		}
-		st.Files += countFiles(files, setOf(remaining))
+		st.Files += countFiles(files, want)
 		st.Dirs += countDirs(files)
-		uc.applyTombstones(files, setOf(remaining))
+		uc.applyTombstones(files, want)
 		remaining = dropRestored(remaining, files)
 	}
 	if len(remaining) > 0 {
@@ -262,9 +272,13 @@ type sessionCopies struct {
 }
 
 // copiesBySession возвращает сессии с копиями путей, упорядоченные
-// от новых к старым (порядок GetAllFileCopies).
+// от новых к старым глобально — по номеру сессии на ленте (убывание;
+// все копии на одной кассете). Конкатенация списков отдельных путей
+// давала лишь локальный порядок: старая копия пути A обходилась раньше
+// более свежей сессии пути B, нарушая контракт «самая свежая
+// читаемая копия».
 func (uc *UseCase) copiesBySession(ctx context.Context, paths []string, tapeUUID string) ([]sessionCopies, error) {
-	var ordered []sessionCopies
+	var all []sessionCopies
 	seen := make(map[int64]bool)
 	for _, p := range paths {
 		copies, err := uc.cat.GetAllFileCopies(ctx, p)
@@ -276,12 +290,13 @@ func (uc *UseCase) copiesBySession(ctx context.Context, paths []string, tapeUUID
 				continue
 			}
 			seen[cp.SessionID] = true
-			ordered = append(ordered, sessionCopies{
+			all = append(all, sessionCopies{
 				id: cp.SessionID, num: cp.SessionNum, tapeUUID: cp.TapeUUID,
 			})
 		}
 	}
-	return ordered, nil
+	sort.Slice(all, func(i, j int) bool { return all[i].num > all[j].num })
+	return all, nil
 }
 
 // checkTapeFor сверяет кассету сессии с установленной: selective
@@ -380,19 +395,15 @@ func (uc *UseCase) applyTombstones(files []domain.FileMeta, want map[string]bool
 }
 
 // isSessionDamage сообщает, что ошибка чтения — повреждение данных
-// сессии (лечится пропуском), а не сбой транспорта (лечится остановкой).
+// сессии (domain.SessionDamageError, лечится пропуском), а не сбой
+// транспорта (лечится остановкой).
 func isSessionDamage(err error) bool {
 	var empty *domain.EmptyIndexError
 	if errors.As(err, &empty) {
 		return false
 	}
-	msg := err.Error()
-	for _, marker := range []string{"повреждён", "повреждена", "разбор индекса", "неожидаемый тип", "отсутствует в индексе"} {
-		if strings.Contains(msg, marker) {
-			return true
-		}
-	}
-	return false
+	var dmg *domain.SessionDamageError
+	return errors.As(err, &dmg)
 }
 
 // countFiles считает файлы (не каталоги, не tombstone'ы); want не пуст —
@@ -431,6 +442,15 @@ func underAny(p string, want map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// wantPredicate строит include-предикат кодека по множеству запроса:
+// сам путь или что-либо под одним из запрошенных корней — та же
+// семантика, что у countFiles.
+func wantPredicate(want map[string]bool) func(string) bool {
+	return func(p string) bool {
+		return want[p] || underAny(p, want)
+	}
 }
 
 // setOf собирает слайс в множество нормализованных путей.

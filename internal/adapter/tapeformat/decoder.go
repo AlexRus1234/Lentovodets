@@ -46,12 +46,18 @@ import (
 // dest == nil — режим проверки (readtest): содержимое читается и хеши
 // сверяются, но на ФС ничего не пишется.
 //
+// include != nil — выборочное восстановление: на ФС попадают только
+// включённые пути (предикат по нормализованному пути индекса); записи
+// остальных путей обрабатываются как в режиме проверки — данные читаются
+// и хеши сверяются, но не пишутся.
+//
 // Прогресс: только Update с фазой port.PhaseWrite; Done/Fail публикует
 // вызывающий. prog == nil допустим.
 func ReadSession(
 	ctx context.Context,
 	tape port.Tape,
 	dest port.FileWriter,
+	include func(path string) bool,
 	prog port.ProgressReporter,
 ) ([]domain.FileMeta, error) {
 	prog = progressOr(prog)
@@ -59,7 +65,8 @@ func ReadSession(
 	if err != nil {
 		return nil, err
 	}
-	if err := readTar(ctx, tape, dest, idx, prog); err != nil {
+	filt := newWriteFilter(include, idx.Files)
+	if err := readTar(ctx, tape, dest, idx, filt, prog); err != nil {
 		return nil, err
 	}
 	return idx.Files, nil
@@ -131,7 +138,7 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 	}
 	var idx SessionIndex
 	if err := json.Unmarshal(trimmed, &idx); err != nil {
-		return nil, fmt.Errorf("tapeformat: разбор индекса: %w", err)
+		return nil, damage(fmt.Errorf("tapeformat: разбор индекса: %w", err))
 	}
 	if idx.Part < 1 {
 		idx.Part = 1 // старые ленты без поля part — все сессии часть 1
@@ -140,7 +147,7 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 		return nil, &domain.NewerFormatError{Found: idx.FormatVersion, Supported: domain.FormatVersion}
 	}
 	if !idx.Type.Valid() {
-		return nil, fmt.Errorf("tapeformat: недопустимый тип сессии %q в индексе", idx.Type)
+		return nil, damage(fmt.Errorf("tapeformat: недопустимый тип сессии %q в индексе", idx.Type))
 	}
 	for i := range idx.Files {
 		if err := checkFileMeta(&idx.Files[i]); err != nil {
@@ -154,18 +161,64 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 func checkFileMeta(fm *domain.FileMeta) error {
 	fm.Path = domain.NormalizePath(fm.Path)
 	if !fm.State.Valid() {
-		return fmt.Errorf("tapeformat: файл %q в индексе: недопустимое состояние %q", fm.Path, fm.State)
+		return damage(fmt.Errorf("tapeformat: файл %q в индексе: недопустимое состояние %q", fm.Path, fm.State))
 	}
 	if err := fm.Validate(); err != nil {
-		return fmt.Errorf("tapeformat: %w", err)
+		return damage(fmt.Errorf("tapeformat: %w", err))
 	}
 	return nil
 }
 
+// writeFilter — правила выборочного восстановления: запись попадает на
+// ФС, если include истинен для её пути. Хардлинк ссылается на данные
+// другой записи (linkname), поэтому для включённых хардлинков их
+// компаньоны пишутся тоже — иначе Link бил бы по несозданному файлу.
+// nil-фильтр — без фильтрации (восстановление всей сессии).
+type writeFilter struct {
+	include    func(path string) bool
+	companions map[string]bool
+}
+
+// newWriteFilter строит фильтр по предикату include и индексу сессии.
+func newWriteFilter(include func(path string) bool, files []domain.FileMeta) *writeFilter {
+	if include == nil {
+		return nil
+	}
+	var companions map[string]bool
+	for _, fm := range files {
+		if fm.IsHardlink() && include(fm.Path) {
+			if companions == nil {
+				companions = make(map[string]bool)
+			}
+			companions[fm.Linkname] = true
+		}
+	}
+	return &writeFilter{include: include, companions: companions}
+}
+
+// writable решает, писать ли запись с путём p на ФС.
+func (f *writeFilter) writable(p string) bool {
+	if f == nil {
+		return true
+	}
+	return f.include(p) || f.companions[p]
+}
+
+// damage помечает ошибку как повреждение данных сессии
+// (domain.SessionDamageError): restore full / readtest пропускают
+// сессию с Warn, транспортный сбой ленты — нет.
+func damage(err error) error {
+	return errors.Join(&domain.SessionDamageError{}, err)
+}
+
 // readTar читает tar-поток сессии, извлекая файлы в dest (или только
-// проверяя хеши, если dest == nil).
-func readTar(ctx context.Context, tape port.Tape, dest port.FileWriter, idx *SessionIndex, prog port.ProgressReporter) error {
+// проверяя хеши, если dest == nil). Невключённые фильтром записи
+// обрабатываются так же, как при dest == nil. После цикла каждая
+// не-tombstone запись индекса обязана была встретиться в tar —
+// урезанный точно по границе записи tar иначе читался бы как успех.
+func readTar(ctx context.Context, tape port.Tape, dest port.FileWriter, idx *SessionIndex, filt *writeFilter, prog port.ProgressReporter) error {
 	byPath := make(map[string]*domain.FileMeta, len(idx.Files))
+	seenInTar := make(map[string]bool, len(idx.Files))
 	var total int64
 	for i := range idx.Files {
 		fm := &idx.Files[i]
@@ -191,13 +244,34 @@ func readTar(ctx context.Context, tape port.Tape, dest port.FileWriter, idx *Ses
 		}
 		fm, ok := byPath[domain.NormalizePath(hdr.Name)]
 		if !ok {
-			return fmt.Errorf("tapeformat: запись tar %q отсутствует в индексе", hdr.Name)
+			return damage(fmt.Errorf("tapeformat: запись tar %q отсутствует в индексе", hdr.Name))
 		}
-		if err := extractEntry(ctx, tr, hdr, fm, dest, buf, prog, &processed, total); err != nil {
+		seenInTar[fm.Path] = true
+		entryDest := dest
+		if !filt.writable(fm.Path) {
+			entryDest = nil // читаем и сверяем хеш, но на ФС не пишем
+		}
+		if err := extractEntry(ctx, tr, hdr, fm, entryDest, buf, prog, &processed, total); err != nil {
 			return err
 		}
 	}
+	if err := verifyIndexCoversTar(idx, seenInTar); err != nil {
+		return err
+	}
 	return drain(br)
+}
+
+// verifyIndexCoversTar — каждая не-tombstone запись индекса должна была
+// встретиться в tar: урезанный точно по границе записи tar иначе
+// читался бы как успех с молча недостающими файлами.
+func verifyIndexCoversTar(idx *SessionIndex, seenInTar map[string]bool) error {
+	for i := range idx.Files {
+		fm := &idx.Files[i]
+		if !fm.IsDeleted() && !seenInTar[fm.Path] {
+			return damage(fmt.Errorf("tapeformat: файл индекса %q отсутствует в tar", fm.Path))
+		}
+	}
+	return nil
 }
 
 // extractEntry обрабатывает одну запись tar: каталог или файл.
@@ -228,7 +302,7 @@ func extractEntry(
 	case tar.TypeLink:
 		return extractHardlink(hdr, fm, dest)
 	default:
-		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип 0x%x в tar", fm.Path, hdr.Typeflag)
+		return damage(fmt.Errorf("tapeformat: запись %q: неожидаемый тип 0x%x в tar", fm.Path, hdr.Typeflag))
 	}
 }
 
@@ -244,7 +318,7 @@ func extractDir(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) erro
 
 func extractSymlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) error {
 	if !fm.IsSymlink() || hdr.Linkname != fm.Linkname || hdr.Size != 0 {
-		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path)
+		return damage(fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path))
 	}
 	if dest == nil {
 		return nil
@@ -260,7 +334,7 @@ func extractSymlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) 
 
 func extractHardlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter) error {
 	if !fm.IsHardlink() || hdr.Linkname != fm.Linkname || hdr.Size != 0 {
-		return fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path)
+		return damage(fmt.Errorf("tapeformat: запись %q: неожидаемый тип или linkname", fm.Path))
 	}
 	if dest == nil {
 		return nil
@@ -275,7 +349,9 @@ func extractHardlink(hdr *tar.Header, fm *domain.FileMeta, dest port.FileWriter)
 }
 
 // extractFile читает содержимое файла из tar, пишет его в dest (если задан)
-// и сверяет xxhash с индексом.
+// и сверяет xxhash с индексом. Сбой записи или хеша удаляет частичный
+// файл с dest: недописанный обрывок выглядел бы как успешная часть
+// восстановления.
 func extractFile(
 	ctx context.Context,
 	tr *tar.Reader,
@@ -288,9 +364,9 @@ func extractFile(
 	total int64,
 ) error {
 	if hdr.Size != fm.Size {
-		return fmt.Errorf(
+		return damage(fmt.Errorf(
 			"tapeformat: файл %q: размер в tar %d, в индексе %d",
-			fm.Path, hdr.Size, fm.Size)
+			fm.Path, hdr.Size, fm.Size))
 	}
 	digest := xxhash.New()
 	var out io.WriteCloser
@@ -313,14 +389,27 @@ func extractFile(
 		}
 	}
 	if copyErr != nil {
-		return copyErr
+		return discardPartial(dest, fm.Path, copyErr)
 	}
 	if got := hashHex(digest.Sum64()); got != fm.Hash {
-		return fmt.Errorf(
+		return discardPartial(dest, fm.Path, damage(fmt.Errorf(
 			"tapeformat: файл %q повреждён: хеш индекса %q, фактический %s",
-			fm.Path, fm.Hash, got)
+			fm.Path, fm.Hash, got)))
 	}
 	return nil
+}
+
+// discardPartial удаляет частично восстановленный файл, сохраняя
+// исходную ошибку; сбой удаления присоединяется (на диске мог остаться
+// обрывок — оператор должен об этом знать).
+func discardPartial(dest port.FileWriter, path string, cause error) error {
+	if dest == nil {
+		return cause
+	}
+	if rmErr := dest.Remove(path); rmErr != nil {
+		return errors.Join(cause, fmt.Errorf("tapeformat: удаление частичного файла %q: %w", path, rmErr))
+	}
+	return cause
 }
 
 // drain дочитывает сегмент tar до filemark'а, чтобы лента встала в начало

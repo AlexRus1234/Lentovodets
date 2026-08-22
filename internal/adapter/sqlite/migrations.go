@@ -25,7 +25,6 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 // applySchema создаёт таблицы и индексы каталога, если их ещё нет.
@@ -116,38 +115,57 @@ func migrationList() []func(tx *sql.Tx) error {
 // migrateV1: v0 → v1 — колонка part таблицы sessions (номер части
 // цепочки spanning-запуска, docs/SPECIFICATION.md §3.1). Существующие
 // строки получают 1 (DEFAULT): до spanning каждая сессия — часть 1.
-// ALTER — единственная операция; «no such table» (свежая БД, таблицы
-// создаст applySchema) и «duplicate column name» (колонка уже есть)
-// — не ошибки. Сопоставление по тексту ошибки SQLite — тот же приём,
-// что контракт ENOSPC в filetape: адаптер не создаёт domain-ошибок,
-// а переводы текстов драйвера стабильны.
+// ALTER — единственная операция. Идемпотентность — предпроверкой схемы
+// (sqlite_master / pragma_table_info), а не разбором текста ошибки:
+// формулировки текстов драйвера — не контракт.
 func migrateV1(tx *sql.Tx) error {
-	_, err := tx.Exec(`ALTER TABLE sessions
-		ADD COLUMN part INTEGER NOT NULL DEFAULT 1`)
-	if err == nil {
-		return nil
+	if !tableExists(tx, "sessions") {
+		return nil // свежая БД: таблицы создаст applySchema
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "no such table") || strings.Contains(msg, "duplicate column name") {
-		return nil
+	if columnExists(tx, "sessions", "part") {
+		return nil // колонка уже добавлена
 	}
-	return fmt.Errorf("sqlite: ALTER sessions ADD part: %w", err)
+	if _, err := tx.Exec(`ALTER TABLE sessions
+		ADD COLUMN part INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("sqlite: ALTER sessions ADD part: %w", err)
+	}
+	return nil
 }
 
 // migrateV2 adds the additive special-file columns. Defaults preserve the
-// meaning of every row written by the previous schema.
+// meaning of every row written by the previous schema. Idempotence is a
+// schema pre-check (pragma_table_info), not driver error text.
 func migrateV2(tx *sql.Tx) error {
-	for _, stmt := range []string{
-		`ALTER TABLE files ADD COLUMN type TEXT NOT NULL DEFAULT 'reg'`,
-		`ALTER TABLE files ADD COLUMN linkname TEXT NOT NULL DEFAULT ''`,
+	if !tableExists(tx, "files") {
+		return nil // свежая БД: таблицы создаст applySchema
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"type", `ALTER TABLE files ADD COLUMN type TEXT NOT NULL DEFAULT 'reg'`},
+		{"linkname", `ALTER TABLE files ADD COLUMN linkname TEXT NOT NULL DEFAULT ''`},
 	} {
-		if _, err := tx.Exec(stmt); err != nil {
-			msg := err.Error()
-			if strings.Contains(msg, "no such table") || strings.Contains(msg, "duplicate column name") {
-				continue
-			}
-			return fmt.Errorf("sqlite: ALTER files: %w", err)
+		if columnExists(tx, "files", col.name) {
+			continue
+		}
+		if _, err := tx.Exec(col.ddl); err != nil {
+			return fmt.Errorf("sqlite: ALTER files ADD %s: %w", col.name, err)
 		}
 	}
 	return nil
+}
+
+// tableExists сообщает, есть ли таблица в схеме БД.
+func tableExists(tx *sql.Tx, name string) bool {
+	var one int
+	return tx.QueryRow(
+		`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, name,
+	).Scan(&one) == nil
+}
+
+// columnExists сообщает, есть ли колонка у таблицы. Имя таблицы —
+// литерал из этого файла, не пользовательский ввод.
+func columnExists(tx *sql.Tx, table, column string) bool {
+	var one int
+	return tx.QueryRow(fmt.Sprintf(
+		`SELECT 1 FROM pragma_table_info('%s') WHERE name = ?`, table), column,
+	).Scan(&one) == nil
 }

@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/iface/web"
@@ -44,6 +45,16 @@ type HTTPClient struct {
 	hc       *http.Client
 }
 
+// responseLimit — потолок тела ответа демона: обычные ответы (JSON
+// со сводками) укладываются с запасом; превышение — внятная ошибка
+// вместо тихо обрезанного JSON.
+const responseLimit = 1 << 20
+
+// requestTimeout — общий потолок одного запроса к демону: операции
+// с лентой длинные, но «зависнуть навсегда» (недоступный хост,
+// зависший демон) клиент не должен.
+const requestTimeout = 5 * time.Minute
+
 // Dial создаёт клиента демона по адресу url.
 func Dial(url, apiKey, username string, askPassword func() (string, error)) ServerClient {
 	return &HTTPClient{
@@ -51,7 +62,7 @@ func Dial(url, apiKey, username string, askPassword func() (string, error)) Serv
 		apiKey:   apiKey,
 		username: username,
 		ask:      askPassword,
-		hc:       &http.Client{},
+		hc:       &http.Client{Timeout: requestTimeout},
 	}
 }
 
@@ -250,9 +261,15 @@ func (c *HTTPClient) roundtrip(ctx context.Context, method, path string, body an
 		return 0, nil, fmt.Errorf("cli: обмен с демоном: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	// limit+1: отличие ровно на байт означает превышение лимита —
+	// обрезанный JSON не дошёл бы до парсера молча
+	raw, err := io.ReadAll(io.LimitReader(res.Body, responseLimit+1))
 	if err != nil {
 		return res.StatusCode, nil, fmt.Errorf("cli: чтение ответа: %w", err)
+	}
+	if len(raw) > responseLimit {
+		return res.StatusCode, nil, fmt.Errorf(
+			"cli: ответ демона превышает %d байт (уточните запрос, например поиск по каталогу)", responseLimit)
 	}
 	return res.StatusCode, raw, nil
 }

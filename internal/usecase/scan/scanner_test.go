@@ -252,6 +252,49 @@ func TestScan_Exclude(t *testing.T) {
 	}
 }
 
+// TestScan_MirrorExcludedPathNoTombstone — exclude означает «не
+// смотреть», а не «удалено»: путь из снимка, покрытый новым
+// exclude-паттерном, не получает tombstone — иначе mirror-restore
+// удалял бы живой файл.
+func TestScan_MirrorExcludedPathNoTombstone(t *testing.T) {
+	fs := testutil.NewMapFS(map[string]string{"etc/keep": "k", "etc/old.tmp": "t"})
+	s := newScanner(fs)
+	job := domain.Job{
+		Name:    "j",
+		Mode:    domain.ModeMirror,
+		Paths:   []string{"/etc"},
+		Exclude: []string{"*.tmp"},
+	}
+	snap := []domain.FileMeta{
+		{Path: "/etc/keep", Size: 1, ModTime: zeroModTime(), State: domain.StateAdded},
+		{Path: "/etc/old.tmp", Size: 1, State: domain.StateAdded}, // теперь исключён
+		{Path: "/etc/really-gone", Size: 1, State: domain.StateAdded},
+	}
+
+	got, err := s.Scan(context.Background(), job, snap)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	tombs := 0
+	for _, fm := range got {
+		if fm.State != domain.StateDeleted {
+			continue
+		}
+		tombs++
+		switch fm.Path {
+		case "/etc/old.tmp":
+			t.Error("исключённый путь получил tombstone — exclude не значит «удалено»")
+		case "/etc/really-gone":
+			// ожидаемый tombstone
+		default:
+			t.Errorf("неожиданный tombstone %q", fm.Path)
+		}
+	}
+	if tombs != 1 {
+		t.Fatalf("tombstone'ов %d; want 1 (/etc/really-gone)", tombs)
+	}
+}
+
 func TestScan_OverlappingRootsDedupe(t *testing.T) {
 	fs := testutil.NewMapFS(map[string]string{"a/b/f": "x"})
 	s := newScanner(fs)

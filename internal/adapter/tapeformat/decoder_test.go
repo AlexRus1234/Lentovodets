@@ -43,7 +43,7 @@ func TestReadSession_RoundTrip(t *testing.T) {
 
 	dest := testutil.NewMapFS(nil)
 	prog := &recProg{}
-	files, err := tapeformat.ReadSession(context.Background(), tape, dest, prog)
+	files, err := tapeformat.ReadSession(context.Background(), tape, dest, nil, prog)
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestReadSession_SpecialFilesRoundTrip(t *testing.T) {
 	}
 	dest := testutil.NewMapFS(nil)
 	prog := &recProg{}
-	got, err := tapeformat.ReadSession(ctx, tape, dest, prog)
+	got, err := tapeformat.ReadSession(ctx, tape, dest, nil, prog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestReadSession_OldIndexWithoutTypeIsRegular(t *testing.T) {
 	ctx := context.Background()
 	oldIndex := []byte(`{"format_version":2,"session_num":1,"type":"FULL","job_run_id":"run","timestamp":1,"job_name":"j","files":[{"path":"/f","size":3,"mod_time":1,"is_dir":false,"hash":"` + hashOf("abc") + `","state":"A"}]}`)
 	tape := craftSessionTape(t, oldIndex, craftTar(t, tarEntry{name: "/f", size: 3, content: "abc"}))
-	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil)
+	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +133,142 @@ func TestReadSession_VerifyOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err := tapeformat.ReadSession(context.Background(), tape, nil, nil)
+	files, err := tapeformat.ReadSession(context.Background(), tape, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ReadSession (dest=nil): %v", err)
 	}
 	if !reflect.DeepEqual(files, idx.Files) {
 		t.Errorf("файлы индекса не совпали: %+v", files)
+	}
+}
+
+// TestReadSession_SelectiveFilter — include != nil: на ФС попадают
+// только включённые пути (и компаньоны хардлинков), но хеши
+// остальных записей всё равно сверяются.
+func TestReadSession_SelectiveFilter(t *testing.T) {
+	t.Run("только включённый файл", func(t *testing.T) {
+		fs, idx := buildFixture(t)
+		tape := testutil.NewFakeTape()
+		writeFixtureSession(t, tape, idx, fs)
+		if err := tape.Rewind(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		dest := testutil.NewMapFS(nil)
+		files, err := tapeformat.ReadSession(context.Background(), tape, dest,
+			func(p string) bool { return p == fixNotesPath }, nil)
+		if err != nil {
+			t.Fatalf("ReadSession: %v", err)
+		}
+		if !reflect.DeepEqual(files, idx.Files) {
+			t.Errorf("include не должен менять возвращаемый индекс: %+v", files)
+		}
+		if got, err := readAllFrom(dest, fixNotesPath); err != nil || got != fixNotesContent {
+			t.Errorf("включённый файл: %q, %v", got, err)
+		}
+		if _, err := dest.Stat(fixMoviePath); err == nil {
+			t.Error("невключённый файл не должен попасть в dest")
+		}
+	})
+
+	t.Run("хардлинк пишет компаньона", func(t *testing.T) {
+		ctx := context.Background()
+		src := testutil.NewMapFS(map[string]string{"/data/first": "payload"})
+		idx := tapeformat.SessionIndex{FormatVersion: domain.FormatVersion, SessionNum: 1, Type: domain.SessionFull, JobRunID: "run", Timestamp: 1, JobName: "j", Files: []domain.FileMeta{
+			{Path: "/data/first", Size: 7, Hash: hashOf("payload"), State: domain.StateAdded},
+			{Path: "/data/second", Type: domain.FileTypeHardlink, Linkname: "/data/first", State: domain.StateAdded},
+		}}
+		tape := testutil.NewFakeTape()
+		writeFixtureSession(t, tape, idx, src)
+		if err := tape.Rewind(ctx); err != nil {
+			t.Fatal(err)
+		}
+		dest := testutil.NewMapFS(nil)
+		if _, err := tapeformat.ReadSession(ctx, tape, dest,
+			func(p string) bool { return p == "/data/second" }, nil); err != nil {
+			t.Fatalf("ReadSession: %v", err)
+		}
+		if _, err := dest.Stat("/data/first"); err != nil {
+			t.Fatalf("компаньон хардлинка не восстановлен: %v", err)
+		}
+		if _, err := dest.Stat("/data/second"); err != nil {
+			t.Fatalf("сам хардлинк не восстановлен: %v", err)
+		}
+	})
+
+	t.Run("хеш невключённого файла всё равно проверяется", func(t *testing.T) {
+		idx := craftBaseIndex()
+		idx.Files = append(idx.Files, domain.FileMeta{
+			Path: "/broken.txt", Size: 3, ModTime: 1,
+			Hash: "deadbeefdeadbeef", State: domain.StateAdded,
+		})
+		tape := craftSessionTape(t, craftIndexBlock(t, idx), craftTar(t,
+			tarEntry{name: "/f.txt", size: 3, content: "abc"},
+			tarEntry{name: "/broken.txt", size: 3, content: "abc"},
+		))
+		_, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil),
+			func(p string) bool { return p == "/f.txt" }, nil)
+		if err == nil || !strings.Contains(err.Error(), "повреждён") {
+			t.Fatalf("хеш невключённого файла не проверен: %v", err)
+		}
+	})
+
+	t.Run("фильтр по корню захватывает поддерево", func(t *testing.T) {
+		ctx := context.Background()
+		src := testutil.NewMapFS(map[string]string{"/keep/a": "a", "/drop/b": "b"})
+		idx := tapeformat.SessionIndex{FormatVersion: domain.FormatVersion, SessionNum: 1, Type: domain.SessionFull, JobRunID: "run", Timestamp: 1, JobName: "j", Files: []domain.FileMeta{
+			{Path: "/keep/a", Size: 1, ModTime: 1, Hash: hashOf("a"), State: domain.StateAdded},
+			{Path: "/drop/b", Size: 1, ModTime: 1, Hash: hashOf("b"), State: domain.StateAdded},
+		}}
+		tape := testutil.NewFakeTape()
+		writeFixtureSession(t, tape, idx, src)
+		if err := tape.Rewind(ctx); err != nil {
+			t.Fatal(err)
+		}
+		dest := testutil.NewMapFS(nil)
+		if _, err := tapeformat.ReadSession(ctx, tape, dest,
+			func(p string) bool { return strings.HasPrefix(p, "/keep/") }, nil); err != nil {
+			t.Fatalf("ReadSession: %v", err)
+		}
+		if _, err := dest.Stat("/keep/a"); err != nil {
+			t.Fatalf("файл под корнем не восстановлен: %v", err)
+		}
+		if _, err := dest.Stat("/drop/b"); err == nil {
+			t.Error("файл вне корня не должен попадать в dest")
+		}
+	})
+}
+
+// TestReadSession_CorruptFileRemovedFromDest — несовпавший хеш:
+// частичный файл удаляется из dest, ошибка сохраняется (обрывок
+// выглядел бы как успешная часть восстановления).
+func TestReadSession_CorruptFileRemovedFromDest(t *testing.T) {
+	idx := craftBaseIndex()
+	idx.Files[0].Hash = "deadbeefdeadbeef"
+	tape := craftSessionTape(t, craftIndexBlock(t, idx),
+		craftTar(t, tarEntry{name: "/f.txt", size: 3, content: "abc"}))
+	dest := testutil.NewMapFS(nil)
+	_, err := tapeformat.ReadSession(context.Background(), tape, dest, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "повреждён") {
+		t.Fatalf("err = %v; want хеш-ошибка", err)
+	}
+	if _, serr := dest.Stat("/f.txt"); serr == nil {
+		t.Error("частичный файл должен удаляться из dest")
+	}
+}
+
+// TestReadSession_IndexFileMissingFromTar — файл есть в индексе, но в
+// tar не пришёл (урезанный в точности по записи tar): ошибка, а не
+// молчаливый успех с недостающими файлами.
+func TestReadSession_IndexFileMissingFromTar(t *testing.T) {
+	idx := craftBaseIndex()
+	idx.Files = append(idx.Files, domain.FileMeta{
+		Path: "/gone.txt", Size: 3, ModTime: 1, Hash: hashOf("xyz"), State: domain.StateAdded,
+	})
+	tape := craftSessionTape(t, craftIndexBlock(t, idx),
+		craftTar(t, tarEntry{name: "/f.txt", size: 3, content: "abc"}))
+	_, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "отсутствует в tar") {
+		t.Fatalf("err = %v; want «отсутствует в tar»", err)
 	}
 }
 
@@ -180,14 +310,14 @@ func TestReadSession_TwoSessionsSequential(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := testutil.NewMapFS(nil)
-	got1, err := tapeformat.ReadSession(ctx, tape, dest, nil)
+	got1, err := tapeformat.ReadSession(ctx, tape, dest, nil, nil)
 	if err != nil {
 		t.Fatalf("чтение сессии 1: %v", err)
 	}
 	if !reflect.DeepEqual(got1, s1.Files) {
 		t.Errorf("сессия 1: %+v", got1)
 	}
-	got2, err := tapeformat.ReadSession(ctx, tape, dest, nil)
+	got2, err := tapeformat.ReadSession(ctx, tape, dest, nil, nil)
 	if err != nil {
 		t.Fatalf("чтение сессии 2 подряд: %v", err)
 	}
@@ -223,7 +353,7 @@ func TestReadSession_PositionedByFilemarks(t *testing.T) {
 	if err := tape.ForwardFilemarks(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
-	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil)
+	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil, nil)
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}
@@ -599,7 +729,7 @@ func TestReadSession_Errors(t *testing.T) {
 			if tt.dest != nil {
 				dest = tt.dest()
 			}
-			files, err := tapeformat.ReadSession(context.Background(), tt.tape(t), dest, nil)
+			files, err := tapeformat.ReadSession(context.Background(), tt.tape(t), dest, nil, nil)
 			if err == nil {
 				t.Fatalf("err = nil, files = %+v", files)
 			}
@@ -631,7 +761,7 @@ func TestReadSession_CancelBetweenEntries(t *testing.T) {
 			return nil
 		}}, nil
 	}}
-	_, err := tapeformat.ReadSession(ctx, tape, dest, nil)
+	_, err := tapeformat.ReadSession(ctx, tape, dest, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "чтение tar") {
 		t.Fatalf("err = %v, want «чтение tar: … context canceled»", err)
 	}
@@ -649,7 +779,7 @@ func TestReadSession_EmptyTarBlock(t *testing.T) {
 	_ = tape.WriteEOF(ctx)
 	_ = tape.Rewind(ctx)
 
-	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil)
+	files, err := tapeformat.ReadSession(ctx, tape, testutil.NewMapFS(nil), nil, nil)
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}
@@ -670,4 +800,149 @@ func readAllFrom(fs port.FileReader, path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// TestReadSession_LinkExtractionErrors — ветки извлечения symlink и
+// hardlink: несовпадение типа с индексом, сбой каталога и самой ссылки.
+func TestReadSession_LinkExtractionErrors(t *testing.T) {
+	// ссылки лежат в /sub: сбой MkdirAll инъектируется точечно по
+	// каталогу /sub, не задевая обычные файлы сессии
+	symlinkSession := func(t *testing.T) *testutil.FakeTape {
+		t.Helper()
+		idx := craftBaseIndex()
+		idx.Files = append(idx.Files, domain.FileMeta{
+			Path: "/sub/link", Type: domain.FileTypeSymlink, Linkname: "target", State: domain.StateAdded,
+		})
+		tarBytes := craftTar(t,
+			tarEntry{name: "/f.txt", size: 3, content: "abc"},
+			tarEntry{name: "/sub/link", typeflag: tar.TypeSymlink, link: "target"},
+		)
+		return craftSessionTape(t, craftIndexBlock(t, idx), tarBytes)
+	}
+	hardlinkSession := func(t *testing.T) *testutil.FakeTape {
+		t.Helper()
+		idx := craftBaseIndex()
+		idx.Files = append(idx.Files, domain.FileMeta{
+			Path: "/sub/second", Type: domain.FileTypeHardlink, Linkname: "/f.txt", State: domain.StateAdded,
+		})
+		tarBytes := craftTar(t,
+			tarEntry{name: "/f.txt", size: 3, content: "abc"},
+			tarEntry{name: "/sub/second", typeflag: tar.TypeLink, link: "/f.txt"},
+		)
+		return craftSessionTape(t, craftIndexBlock(t, idx), tarBytes)
+	}
+	boom := errors.New("boom")
+	linkFS := func(hooks func(h *hookFS)) port.FileWriter {
+		fs := &hookFS{Filesystem: testutil.NewMapFS(nil)}
+		hooks(fs)
+		return fs
+	}
+	// сбой MkdirAll только по каталогу ссылок: обычные файлы сессии
+	// (/f.txt, MkdirAll ".") обрабатываются раньше и не должны
+	// перехватывать инъекцию
+	failSubMkdir := func(h *hookFS) {
+		h.onMkdir = func(p string) error {
+			if p == "/sub" {
+				return boom
+			}
+			return nil
+		}
+	}
+
+	t.Run("symlink: сбой MkdirAll", func(t *testing.T) {
+		_, err := tapeformat.ReadSession(context.Background(), symlinkSession(t),
+			linkFS(failSubMkdir), nil, nil)
+		if !errors.Is(err, boom) || !strings.Contains(err.Error(), "каталог для") {
+			t.Fatalf("err = %v; want MkdirAll-сбой для symlink", err)
+		}
+	})
+	t.Run("symlink: сбой Symlink", func(t *testing.T) {
+		_, err := tapeformat.ReadSession(context.Background(), symlinkSession(t),
+			linkFS(func(h *hookFS) { h.onSymlink = func(string) error { return boom } }), nil, nil)
+		if !errors.Is(err, boom) || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("err = %v; want Symlink-сбой", err)
+		}
+	})
+	t.Run("hardlink: сбой MkdirAll", func(t *testing.T) {
+		_, err := tapeformat.ReadSession(context.Background(), hardlinkSession(t),
+			linkFS(failSubMkdir), nil, nil)
+		if !errors.Is(err, boom) || !strings.Contains(err.Error(), "каталог для") {
+			t.Fatalf("err = %v; want MkdirAll-сбой для hardlink", err)
+		}
+	})
+	t.Run("hardlink: сбой Link", func(t *testing.T) {
+		_, err := tapeformat.ReadSession(context.Background(), hardlinkSession(t),
+			linkFS(func(h *hookFS) { h.onLink = func(string) error { return boom } }), nil, nil)
+		if !errors.Is(err, boom) || !strings.Contains(err.Error(), "hardlink") {
+			t.Fatalf("err = %v; want Link-сбой", err)
+		}
+	})
+	t.Run("hardlink: тип записи не совпал с индексом", func(t *testing.T) {
+		idx := craftBaseIndex()
+		// индекс: symlink; tar: TypeLink — extractHardlink видит чужой тип
+		idx.Files = append(idx.Files, domain.FileMeta{
+			Path: "/second", Type: domain.FileTypeSymlink, Linkname: "/f.txt", State: domain.StateAdded,
+		})
+		tarBytes := craftTar(t,
+			tarEntry{name: "/f.txt", size: 3, content: "abc"},
+			tarEntry{name: "/second", typeflag: tar.TypeLink, link: "/f.txt"},
+		)
+		tape := craftSessionTape(t, craftIndexBlock(t, idx), tarBytes)
+		_, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil), nil, nil)
+		var dmg *domain.SessionDamageError
+		if !errors.As(err, &dmg) || !strings.Contains(err.Error(), "неожидаемый тип или linkname") {
+			t.Fatalf("err = %v; want повреждение (тип записи)", err)
+		}
+	})
+	t.Run("неожидаемый тип tar", func(t *testing.T) {
+		idx := craftBaseIndex()
+		tarBytes := craftTar(t, tarEntry{name: "/f.txt", typeflag: tar.TypeFifo})
+		tape := craftSessionTape(t, craftIndexBlock(t, idx), tarBytes)
+		_, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil), nil, nil)
+		var dmg *domain.SessionDamageError
+		if !errors.As(err, &dmg) || !strings.Contains(err.Error(), "неожидаемый тип") {
+			t.Fatalf("err = %v; want повреждение (тип tar)", err)
+		}
+	})
+	t.Run("обычный файл с linkname в индексе", func(t *testing.T) {
+		idx := craftBaseIndex()
+		idx.Files[0].Linkname = "target" // reg с linkname — Validate падает
+		tape := craftSessionTape(t, craftIndexBlock(t, idx), craftTar(t, tarEntry{name: "/f.txt", size: 3, content: "abc"}))
+		_, err := tapeformat.ReadSession(context.Background(), tape, nil, nil, nil)
+		var dmg *domain.SessionDamageError
+		if !errors.As(err, &dmg) || !strings.Contains(err.Error(), "linkname") {
+			t.Fatalf("err = %v; want повреждение (linkname у обычного файла)", err)
+		}
+	})
+	t.Run("ссылки в режиме проверки (dest nil)", func(t *testing.T) {
+		idx := craftBaseIndex()
+		idx.Files = append(idx.Files,
+			domain.FileMeta{Path: "/s", Type: domain.FileTypeSymlink, Linkname: "t", State: domain.StateAdded},
+			domain.FileMeta{Path: "/h", Type: domain.FileTypeHardlink, Linkname: "/f.txt", State: domain.StateAdded},
+		)
+		tarBytes := craftTar(t,
+			tarEntry{name: "/f.txt", size: 3, content: "abc"},
+			tarEntry{name: "/s", typeflag: tar.TypeSymlink, link: "t"},
+			tarEntry{name: "/h", typeflag: tar.TypeLink, link: "/f.txt"},
+		)
+		tape := craftSessionTape(t, craftIndexBlock(t, idx), tarBytes)
+		files, err := tapeformat.ReadSession(context.Background(), tape, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("ReadSession (dest=nil): %v", err)
+		}
+		if len(files) != 3 {
+			t.Fatalf("файлов %d; want 3", len(files))
+		}
+	})
+}
+
+// TestWriteSession_InvalidLinkname — валидация индекса на записи:
+// обычный файл с linkname не попадает на ленту.
+func TestWriteSession_InvalidLinkname(t *testing.T) {
+	idx := craftBaseIndex()
+	idx.Files[0].Linkname = "target"
+	err := tapeformat.WriteSession(context.Background(), testutil.NewFakeTape(), idx, testutil.NewMapFS(nil), nil)
+	if err == nil || !strings.Contains(err.Error(), "linkname") {
+		t.Fatalf("WriteSession: %v; want ошибка валидации", err)
+	}
 }

@@ -212,4 +212,12 @@ func TestBackupRestore_AppendIncrementalAndSelective(t *testing.T) {
 	if got := selFiles["notes/a.txt"]; string(got) != "alpha v1\n" {
 		t.Fatalf("selective a.txt: %q, хочу версию из сессии 1", got)
 	}
+	// фильтр: из сессии 1 на ФС попадает только запрошенный путь,
+	// остальные записи лишь проверяются по хешам (SPEC §4.3)
+	if _, ok := selFiles["notes/b.txt"]; ok {
+		t.Error("selective: незапрошенный b.txt не должен попадать в dest")
+	}
+	if len(selFiles) != 1 {
+		t.Fatalf("selective: в dest %d файлов, хочу только a.txt: %v", len(selFiles), selFiles)
+	}
 }

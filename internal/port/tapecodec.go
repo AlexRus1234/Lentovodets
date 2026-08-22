@@ -63,9 +63,14 @@ type TapeCodec interface {
 		files []domain.FileMeta, fs FileReader, prog ProgressReporter) error
 
 	// ReadSession читает сессию с текущей позиции ленты; dest == nil —
-	// режим проверки без записи на ФС. Если на позиции сессии лежит
-	// блок-указатель продолжения — *domain.ContinuationError.
+	// режим проверки без записи на ФС. include != nil — выборочное
+	// восстановление: на ФС пишутся только пути, для которых include
+	// истинен (плюс каталоги-предки и данные хардлинк-компаньонов);
+	// содержимое остальных записей всё равно читается и хеши
+	// сверяются. Если на позиции сессии лежит блок-указатель
+	// продолжения — *domain.ContinuationError.
 	ReadSession(ctx context.Context, tape Tape, dest FileWriter,
+		include func(path string) bool,
 		prog ProgressReporter) ([]domain.FileMeta, error)
 
 	// ReadHeader читает заголовок сессии (индекс без файлов и без

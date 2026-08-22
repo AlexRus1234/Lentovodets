@@ -46,7 +46,7 @@ type Tape struct {
 func Open(path string) (*Tape, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("linuxtape: открытие %s: %w", path, err)
+		return nil, fmt.Errorf("linuxtape: открытие %s: %w", path, errnoAsDomain(err))
 	}
 	return &Tape{f: f}, nil
 }
@@ -70,8 +70,8 @@ func (t *Tape) ReadBlock(ctx context.Context) ([]byte, error) {
 }
 
 // WriteBlock записывает блок. Блок короче domain.BlockSize добивается
-// нулями, длиннее — ошибка. Переполнение ленты всплывает как ENOSPC
-// (*os.PathError); маппинг в domain.TapeFullError — задача use case.
+// нулями, длиннее — ошибка. Переполнение ленты (ENOSPC записи)
+// типизируется здесь же в *domain.TapeFullError (errnoAsDomain).
 func (t *Tape) WriteBlock(ctx context.Context, block []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -82,7 +82,7 @@ func (t *Tape) WriteBlock(ctx context.Context, block []byte) error {
 	buf := make([]byte, domain.BlockSize)
 	copy(buf, block)
 	if _, err := t.f.Write(buf); err != nil {
-		return fmt.Errorf("linuxtape: запись блока: %w", err)
+		return fmt.Errorf("linuxtape: запись блока: %w", errnoAsDomain(err))
 	}
 	return nil
 }

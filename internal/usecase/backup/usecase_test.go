@@ -293,6 +293,7 @@ func TestBackup_ForcedFullRestartsNumbering(t *testing.T) {
 		t.Fatalf("Backup#1: %v", err)
 	}
 	h.fs.MapFS["etc/hosts"].ModTime = time.Unix(10, 0)
+	h.rec.fsf = nil
 
 	res, err := h.uc.Backup(ctx, "daily", backup.Options{Full: true})
 	if err != nil {
@@ -304,6 +305,26 @@ func TestBackup_ForcedFullRestartsNumbering(t *testing.T) {
 	sessions, _ := h.cat.ListSessions(ctx, "tape-uuid")
 	if len(sessions) != 1 || sessions[0].ID != res.Session.ID {
 		t.Fatalf("старые сессии не удалены: %+v", sessions)
+	}
+	// позиционирование MTFSF(1): FULL переписывает ленту с сессии 1
+	// (FORMAT §10), а не дописывает за старыми сессиями MTFSF(2K+1)
+	if len(h.rec.fsf) != 1 || h.rec.fsf[0] != 1 {
+		t.Errorf("ForwardFilemarks args = %v; want [1]", h.rec.fsf)
+	}
+	// лента: ярлык + EOD-пара (FakeCodec блоков не пишет) — 3 метки
+	if got := h.fakeTape.MarkCount(); got != 3 {
+		t.Errorf("MarkCount = %d; want 3", got)
+	}
+
+	// INC после рестарта позиционируется MTFSF(2*1+1)=3 — на свежий
+	// FULL, а не в середину старых данных
+	h.fs.MapFS["etc/hosts"].ModTime = time.Unix(20, 0)
+	h.rec.fsf = nil
+	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
+		t.Fatalf("Backup#3 (INC после FULL-рестарта): %v", err)
+	}
+	if len(h.rec.fsf) != 1 || h.rec.fsf[0] != 3 {
+		t.Errorf("INC после рестарта: ForwardFilemarks args = %v; want [3]", h.rec.fsf)
 	}
 }
 
@@ -438,7 +459,7 @@ func TestBackup_TapeFullMapping(t *testing.T) {
 		wantFull bool
 	}{
 		{"typed TapeFullError", &domain.TapeFullError{Capacity: 100}, true},
-		{"enosys string", errors.New("write block: no space left on device"), true},
+		{"enospc joined by adapter", errors.Join(&domain.TapeFullError{}, errors.New("write block: no space left on device")), true},
 		{"unrelated", errors.New("io error"), false},
 	}
 	for _, tc := range cases {

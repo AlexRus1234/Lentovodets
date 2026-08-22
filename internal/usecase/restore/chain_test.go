@@ -372,7 +372,7 @@ func TestRestore_SelectiveFromPart2(t *testing.T) {
 		}
 	}
 
-	st, err := h.uc.Selective(ctx, id, nil)
+	st, err := h.uc.Selective(ctx, id, []string{"/part2/b"})
 	if err != nil {
 		t.Fatalf("Selective: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestRestore_SelectiveWrongTape(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
-		_, err = h.uc.Selective(ctx, id, nil)
+		_, err = h.uc.Selective(ctx, id, []string{"/a"})
 		if err == nil || !strings.Contains(err.Error(), "вставьте T2") {
 			t.Fatalf("Selective: %v; want подсказка \"вставьте T2\"", err)
 		}
@@ -427,7 +427,7 @@ func TestRestore_SelectiveWrongTape(t *testing.T) {
 		}
 		fc := &failCat{MemCatalog: h.cat, getTape: errors.New("db down")}
 		h.uc = restore.New(h.tape, h.codec, fc, h.dest, nil, testutil.NoopLogger(), nil)
-		_, err = h.uc.Selective(ctx, id, nil)
+		_, err = h.uc.Selective(ctx, id, []string{"/a"})
 		if err == nil || !strings.Contains(err.Error(), "вставьте tape-uuid-2") {
 			t.Fatalf("Selective: %v; want подсказка с UUID", err)
 		}

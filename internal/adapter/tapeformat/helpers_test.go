@@ -158,10 +158,13 @@ func (h *hookTape) WriteEOF(ctx context.Context) error {
 // hookFS делегирует всё MapFS, позволяя ломать отдельные операции.
 type hookFS struct {
 	port.Filesystem
-	onStat   func(path string) error
-	onOpen   func(path string) (io.ReadCloser, error)
-	onMkdir  func(path string) error
-	onCreate func(path string) (io.WriteCloser, error)
+	onStat    func(path string) error
+	onOpen    func(path string) (io.ReadCloser, error)
+	onMkdir   func(path string) error
+	onCreate  func(path string) (io.WriteCloser, error)
+	onSymlink func(path string) error
+	onLink    func(path string) error
+	onRemove  func(path string) error
 }
 
 func (h *hookFS) Stat(path string) (port.Entry, error) {
@@ -194,6 +197,33 @@ func (h *hookFS) Create(path string) (io.WriteCloser, error) {
 		return h.onCreate(path)
 	}
 	return h.Filesystem.Create(path)
+}
+
+func (h *hookFS) Symlink(linkname, path string) error {
+	if h.onSymlink != nil {
+		if err := h.onSymlink(path); err != nil {
+			return err
+		}
+	}
+	return h.Filesystem.Symlink(linkname, path)
+}
+
+func (h *hookFS) Link(oldname, newname string) error {
+	if h.onLink != nil {
+		if err := h.onLink(newname); err != nil {
+			return err
+		}
+	}
+	return h.Filesystem.Link(oldname, newname)
+}
+
+func (h *hookFS) Remove(path string) error {
+	if h.onRemove != nil {
+		if err := h.onRemove(path); err != nil {
+			return err
+		}
+	}
+	return h.Filesystem.Remove(path)
 }
 
 // hookReader оборачивает io.ReadCloser, ломая Read/Close по крючкам.

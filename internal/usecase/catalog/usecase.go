@@ -187,7 +187,7 @@ func (uc *UseCase) ReadTest(ctx context.Context) ([]TapeReport, error) {
 		if err := ctx.Err(); err != nil {
 			return reports, fmt.Errorf("readtest: %w", err)
 		}
-		files, err := uc.codec.ReadSession(ctx, cur.Tape, nil, uc.prog)
+		files, err := uc.codec.ReadSession(ctx, cur.Tape, nil, nil, uc.prog)
 		if isEndOfSessions(err) {
 			break
 		}

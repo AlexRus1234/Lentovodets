@@ -21,6 +21,10 @@ vet:
 
 .PHONY: fmt
 fmt:
+	"$(GO)" fmt ./...
+
+.PHONY: lint-fix
+lint-fix:
 	"$(GOLANGCI_LINT)" run --fix ./...
 
 .PHONY: test
@@ -35,6 +39,12 @@ test-race:
 cover:
 	"$(GO)" test -coverprofile="$(COVER_OUT)" ./...
 	"$(GO)" tool cover -func="$(COVER_OUT)" | tail -n 1
+
+# cover-check — сверка покрытия с порогами docs/TESTING.md §4.
+.PHONY: cover-check
+cover-check:
+	"$(GO)" test -coverprofile="$(COVER_OUT)" ./...
+	"$(GO)" run ./tools/covercheck -profile "$(COVER_OUT)"
 
 .PHONY: build
 build:

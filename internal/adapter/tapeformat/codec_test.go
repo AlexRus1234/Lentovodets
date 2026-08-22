@@ -92,7 +92,7 @@ func TestCodec_SessionRoundtrip(t *testing.T) {
 	if err := tape.Rewind(context.Background()); err != nil {
 		t.Fatalf("Rewind: %v", err)
 	}
-	got, err := codec.ReadSession(context.Background(), tape, nil, nil)
+	got, err := codec.ReadSession(context.Background(), tape, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}
@@ -160,4 +160,15 @@ func TestCodec_ReadHeader(t *testing.T) {
 			t.Fatalf("ReadHeader: %v; want ContinuationError", err)
 		}
 	})
+}
+
+// TestProgressOr_NilProgNoop — заглушка прогресса проглатывает все
+// вызовы (ReadSession с prog == nil).
+func TestProgressOr_NilProgNoop(t *testing.T) {
+	ctx := context.Background()
+	_, idx := singleFileFixture("/f.txt", "data")
+	tape := craftSessionTape(t, craftIndexBlock(t, idx), craftTar(t, tarEntry{name: "/f.txt", size: 4, content: "data"}))
+	if _, err := tapeformat.ReadSession(ctx, tape, nil, nil, nil); err != nil {
+		t.Fatalf("ReadSession без прогресса: %v", err)
+	}
 }

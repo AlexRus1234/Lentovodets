@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"path"
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
@@ -59,6 +60,11 @@ type FakeCodec struct {
 	WroteConts   []port.Continuation       // записанное WriteContinuation
 	ErrWriteCont error
 	ErrReadCont  error
+
+	// WriteToDest — ReadSession пишет выдаваемые файлы в dest,
+	// имитируя реальный декодер (для тестов выборочного
+	// восстановления). Уважает include-предикат вызова.
+	WriteToDest bool
 
 	// Headers — очередь заголовков ReadHeader (сверка цепочки кассет:
 	// заголовок сессии 1 новой кассеты); пусто — EmptyIndexError.
@@ -151,11 +157,14 @@ func (c *FakeCodec) WriteSession(
 // ReadSession выдаёт очередную сессию из Queue; при пустой очереди —
 // ReadFiles, если заданы, иначе *domain.EmptyIndexError. На вызове
 // ContOnCall (если задан) возвращает Cont — сценарий «кассета имеет
-// продолжение».
+// продолжение». WriteToDest && dest != nil — пишет выдаваемые файлы в
+// dest (include != nil — только включённые пути), имитируя реальный
+// декодер для тестов выборочного восстановления.
 func (c *FakeCodec) ReadSession(
 	ctx context.Context,
 	tape port.Tape,
 	dest port.FileWriter,
+	include func(path string) bool,
 	prog port.ProgressReporter,
 ) ([]domain.FileMeta, error) {
 	c.ReadCalls++
@@ -173,15 +182,63 @@ func (c *FakeCodec) ReadSession(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(c.Queue) > 0 {
-		files := c.Queue[0]
+	var files []domain.FileMeta
+	switch {
+	case len(c.Queue) > 0:
+		files = c.Queue[0]
 		c.Queue = c.Queue[1:]
-		return append([]domain.FileMeta(nil), files...), nil
+	case len(c.ReadFiles) > 0:
+		files = c.ReadFiles
+	default:
+		return nil, &domain.EmptyIndexError{}
 	}
-	if len(c.ReadFiles) > 0 {
-		return append([]domain.FileMeta(nil), c.ReadFiles...), nil
+	files = append([]domain.FileMeta(nil), files...)
+	if c.WriteToDest && dest != nil {
+		if err := writeFilesToDest(dest, files, include); err != nil {
+			return nil, err
+		}
 	}
-	return nil, &domain.EmptyIndexError{}
+	return files, nil
+}
+
+// writeFilesToDest имитирует извлечение реального декодера: каталоги,
+// файлы, симлинки и хардлинки; include != nil — только включённые пути
+// (с компаньонами хардлинков).
+func writeFilesToDest(dest port.FileWriter, files []domain.FileMeta, include func(path string) bool) error {
+	writable := func(p string) bool { return include == nil || include(p) }
+	for _, fm := range files {
+		if fm.IsDeleted() || !writable(fm.Path) {
+			continue
+		}
+		switch {
+		case fm.IsDir:
+			if err := dest.MkdirAll(fm.Path, 0o755); err != nil {
+				return err
+			}
+		case fm.IsSymlink():
+			if err := dest.MkdirAll(path.Dir(fm.Path), 0o755); err != nil {
+				return err
+			}
+			if err := dest.Symlink(fm.Linkname, fm.Path); err != nil {
+				return err
+			}
+		default:
+			if err := dest.MkdirAll(path.Dir(fm.Path), 0o755); err != nil {
+				return err
+			}
+			w, err := dest.Create(fm.Path)
+			if err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, fm.Path); err != nil {
+				return err
+			}
+			if err := w.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ReadHeader выдаёт очередной заголовок из Headers; пустая очередь —

@@ -54,8 +54,6 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 	verify := isTruthy(r.URL.Query().Get("verify"))
 
 	id, err := s.startTapeTask("backup", func(task *Task) {
-		s.gate.acquireTask()
-		defer s.gate.releaseTask()
 		tape, err := s.openTape()
 		if err != nil {
 			task.finishError(err, s.deps.Clock.Now())
@@ -111,8 +109,6 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := s.startTapeTask("restore", func(task *Task) {
-		s.gate.acquireTask()
-		defer s.gate.releaseTask()
 		tape, err := s.openTape()
 		if err != nil {
 			task.finishError(err, s.deps.Clock.Now())
@@ -170,12 +166,24 @@ func (s *Server) handleTaskProgress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task.Snapshot())
 }
 
-// startTapeTask регистрирует фоновую задачу атомарно; отказ, если уже
-// есть активная (включая ожидающую кассету) — стример один, параллельные
-// ленточные задачи бессмысленны.
+// startTapeTask регистрирует фоновую задачу, владеющую устройством
+// ленты; отказ, если уже есть активная (включая ожидающую кассету) —
+// стример один. Гейт резервируется ДО регистрации: между StartIfIdle
+// и захватом гейта в горутине задачи короткая операция успевала
+// открыть устройство, и задача падала на EBUSY. Горутина дожидается
+// текущей короткой операции (waitShortOps) и освобождает гейт
+// по завершении.
 func (s *Server) startTapeTask(kind string, fn func(*Task)) (string, error) {
+	if !s.gate.reserveTask() {
+		return "", errors.New("уже есть активная задача; дождитесь завершения")
+	}
 	id := s.deps.NewTaskID()
-	if err := s.tasks.StartIfIdle(id, kind, fn); err != nil {
+	if err := s.tasks.StartIfIdle(id, kind, func(task *Task) {
+		s.gate.waitShortOps()
+		defer s.gate.releaseTask()
+		fn(task)
+	}); err != nil {
+		s.gate.unreserveTask()
 		return "", err
 	}
 	return id, nil
@@ -198,10 +206,17 @@ func (s *Server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	}
 	var body taskContinueRequest
 	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&body)
-		if err != nil && !errors.Is(err, io.EOF) { // пустое тело = предложенное имя
-			writeErr(w, http.StatusBadRequest, "тело запроса: "+err.Error(), "bad_request")
+		// лимит как у остальных JSON-эндпоинтов; пустое тело = предложенное имя
+		raw, rerr := io.ReadAll(io.LimitReader(r.Body, maxLoginBody))
+		if rerr != nil {
+			writeErr(w, http.StatusBadRequest, "тело запроса не читается", "bad_request")
 			return
+		}
+		if len(raw) > 0 {
+			if jerr := json.Unmarshal(raw, &body); jerr != nil {
+				writeErr(w, http.StatusBadRequest, "тело запроса: "+jerr.Error(), "bad_request")
+				return
+			}
 		}
 	}
 	name, err := task.Continue(body.TapeName)

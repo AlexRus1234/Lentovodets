@@ -17,9 +17,12 @@
 package tomlconfig_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -730,5 +733,88 @@ func TestRawTOML(t *testing.T) {
 	}
 	if raw != "" {
 		t.Errorf("RawTOML без файла = %q, want пусто", raw)
+	}
+}
+
+// TestConfig_ConcurrentReadWrite — демон читает конфиг горутиной задачи
+// (Capacity/Jobs/RawTOML) параллельно с редактированием заданий из
+// HTTP; под -race мьютекс Config обязан исключить гонку viper'а.
+func TestConfig_ConcurrentReadWrite(t *testing.T) {
+	cfg, _ := newConfig(t, validTOML)
+	job := domain.Job{Name: "extra", Mode: domain.ModeAppend, Paths: []string{"/x"}}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	readers := 4
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = cfg.Jobs()
+				_, _ = cfg.Capacity()
+				_, _ = cfg.RawTOML()
+				_ = cfg.SessionTTL()
+			}
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		name := job.Name
+		if err := cfg.AddJob(job); err != nil {
+			t.Errorf("AddJob #%d: %v", i, err)
+		}
+		job.Name = fmt.Sprintf("%s-%d", name, i+1)
+	}
+	close(stop)
+	wg.Wait()
+}
+
+// TestConfig_AddJobAtomicWrite — успешная запись атомарна: файл на
+// диске содержит новое задание целиком, рядом не остаётся временных
+// файлов; сбой (дубликат имени) не трогает исходный файл.
+func TestConfig_AddJobAtomicWrite(t *testing.T) {
+	cfg, path := newConfig(t, validTOML)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("чтение до: %v", err)
+	}
+
+	// сбой: дубликат имени — файл не меняется
+	dup := domain.Job{Name: "media", Mode: domain.ModeAppend, Paths: []string{"/dup"}}
+	if err := cfg.AddJob(dup); err == nil {
+		t.Fatal("AddJob с дубликатом имени: нет ошибки")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("чтение после сбоя: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("неудачный AddJob изменил файл на диске")
+	}
+
+	// успех: файл целиком перезаписан, временных файлов не осталось
+	if err := cfg.AddJob(domain.Job{Name: "newjob", Mode: domain.ModeMirror, Paths: []string{"/new"}}); err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("чтение после записи: %v", err)
+	}
+	if !strings.Contains(string(raw), "newjob") {
+		t.Error("новое задание не в файле")
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("временный файл не удалён: %s", e.Name())
+		}
 	}
 }

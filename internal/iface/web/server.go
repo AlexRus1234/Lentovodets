@@ -197,7 +197,13 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("web: слушание %s: %w", s.bind, err)
 	}
-	httpSrv := &http.Server{Handler: s.router} //nolint:gosec // таймауты не критичны для LAN-демона
+	// ReadHeaderTimeout — защита от slowloris при не-loopback bind;
+	// на чтение тела и стриминг ответов таймаута нет: прогресс задач
+	// долгий by design
+	httpSrv := &http.Server{
+		Handler:           s.router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
@@ -283,18 +289,18 @@ func writeErr(w http.ResponseWriter, status int, msg, code string) {
 }
 
 // writeTapeErr — ошибка операции с лентой в ответе API: занятость
-// фоновой задачей — 409 task_running; errno ENOMEDIUM (st-драйвер без
-// кассеты, open или ioctl — «no medium found») — 409 no_medium с
-// понятным текстом. Строковая проверка errno — конвенция проекта
-// (см. mapTapeFull в usecase/backup): iface не импортирует syscall.
+// фоновой задачей — 409 task_running; *domain.NoMediumError (st-драйвер
+// без кассеты; типизируется адаптером linuxtape) — 409 no_medium с
+// понятным текстом.
 func writeTapeErr(w http.ResponseWriter, err error, code string) {
 	var busy tapeBusyError
 	if errors.As(err, &busy) {
 		writeErr(w, http.StatusConflict, busy.Error(), "task_running")
 		return
 	}
-	if strings.Contains(err.Error(), "no medium found") {
-		writeErr(w, http.StatusConflict, (&domain.NoMediumError{}).Error(), "no_medium")
+	var noMedium *domain.NoMediumError
+	if errors.As(err, &noMedium) {
+		writeErr(w, http.StatusConflict, noMedium.Error(), "no_medium")
 		return
 	}
 	writeErr(w, statusFor(err), err.Error(), code)

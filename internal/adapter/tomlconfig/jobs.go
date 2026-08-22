@@ -22,17 +22,23 @@ package tomlconfig
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"lentovodec/internal/domain"
 )
 
 // AddJob добавляет задание в [[jobs]] и записывает файл.
 // Невалидное задание или дубликат имени — ошибка, файл не меняется.
+// Чтение-модификация-запись атомарны под мьютексом Config: параллельные
+// AddJob не теряют обновления друг друга.
 func (c *Config) AddJob(job domain.Job) error {
 	if err := job.Validate(); err != nil {
 		return fmt.Errorf("tomlconfig: %w", err)
 	}
-	jobs, err := c.Jobs()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	jobs, err := c.jobsLocked()
 	if err != nil {
 		return err
 	}
@@ -48,7 +54,9 @@ func (c *Config) AddJob(job domain.Job) error {
 // RemoveJob удаляет задание по имени; отсутствие имени — ошибка,
 // файл не меняется.
 func (c *Config) RemoveJob(name string) error {
-	jobs, err := c.Jobs()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	jobs, err := c.jobsLocked()
 	if err != nil {
 		return err
 	}
@@ -69,10 +77,35 @@ func (c *Config) RemoveJob(name string) error {
 
 // setJobs обновляет список заданий в файле (сначала запись, потом
 // слоёное представление — при сбое записи память консистентна диску).
+// Запись атомарна: новый файл собирается рядом во временном файле и
+// переименовывается поверх старого — сбой на середине записи (диск
+// переполнен, процесс убит) не оставляет обрезанный конфиг, оригинал
+// либо целиком старый, либо целиком новый. Вызывается под мьютексом.
 func (c *Config) setJobs(list []map[string]any) error {
 	c.file.Set(keyJobs, list)
-	if err := c.file.WriteConfigAs(c.path); err != nil {
-		return fmt.Errorf("tomlconfig: запись %s: %w", c.path, err)
+	// имя временного файла обязано кончаться на .toml: viper выводит
+	// формат записи из расширения
+	tmp, err := os.CreateTemp(filepath.Dir(c.path), filepath.Base(c.path)+".tmp-*.toml")
+	if err != nil {
+		return fmt.Errorf("tomlconfig: временный файл рядом с %s: %w", c.path, err)
+	}
+	tmpName := tmp.Name()
+	// права исходного файла, если он есть; CreateTemp даёт 0600 — для
+	// нового конфига это уместно (внутри bcrypt-хеш пароля)
+	if info, statErr := os.Stat(c.path); statErr == nil {
+		_ = tmp.Chmod(info.Mode().Perm()) // best-effort: платформы различаются
+	}
+	closeErr := tmp.Close()
+	writeErr := c.file.WriteConfigAs(tmpName)
+	if writeErr == nil {
+		writeErr = os.Rename(tmpName, c.path)
+	}
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(tmpName)
+		if writeErr != nil {
+			return fmt.Errorf("tomlconfig: запись %s: %w", c.path, writeErr)
+		}
+		return fmt.Errorf("tomlconfig: запись %s: %w", c.path, closeErr)
 	}
 	c.read.Set(keyJobs, list)
 	return nil

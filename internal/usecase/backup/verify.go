@@ -61,7 +61,7 @@ func (uc *UseCase) verifyPart(
 		return 0, 0, uc.verifyError(sess, "",
 			fmt.Errorf("позиционирование MTFSF(%d): %w", 2*sess.Num-1, err))
 	}
-	read, err := uc.codec.ReadSession(ctx, tape, nil, uc.prog)
+	read, err := uc.codec.ReadSession(ctx, tape, nil, nil, uc.prog)
 	if err != nil {
 		return 0, 0, uc.verifyError(sess, "", fmt.Errorf("обратное чтение: %w", err))
 	}

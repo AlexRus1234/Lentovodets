@@ -20,7 +20,7 @@
 //
 //   - encoder: WriteSession(tape, files, fs, prog) — JSON-индекс (добитый
 //     до BlockSize), WriteEOF, tar-поток, WriteEOF;
-//   - decoder: ReadSession(tape, dest, prog) ([]FileMeta, error) — чтение
+//   - decoder: ReadSession(tape, dest, include, prog) ([]FileMeta, error) — чтение
 //     индекса, затем tar с обязательной проверкой xxhash;
 //   - label: EncodeLabel(label) []byte / DecodeLabel(block) (TapeLabel, error).
 //

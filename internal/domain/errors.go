@@ -340,3 +340,22 @@ func (e *NoMediumError) Is(target error) bool {
 	_, ok := target.(*NoMediumError)
 	return ok
 }
+
+// SessionDamageError — данные сессии на ленте не читаются как целые:
+// битый JSON индекса, недопустимые поля записей, несовпадение индекса
+// с tar-потоком (запись есть только на одной из сторон), размер,
+// неожиданный тип или несовпавший хеш. Повреждённая сессия
+// пропускается с Warn (restore full / readtest продолжаются), в
+// отличие от транспортного сбоя ленты, останавливающего всё.
+// Адаптер tapeformat присоединяет маркер через errors.Join к
+// сохранённому тексту ошибки; поля для диагностики не нужны.
+type SessionDamageError struct{}
+
+// Error реализует интерфейс error.
+func (e *SessionDamageError) Error() string { return "сессия повреждена" }
+
+// Is поддерживает errors.Is(err, &SessionDamageError{}).
+func (e *SessionDamageError) Is(target error) bool {
+	_, ok := target.(*SessionDamageError)
+	return ok
+}

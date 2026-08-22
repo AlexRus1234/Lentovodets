@@ -369,6 +369,29 @@ func TestBackup_SuggestFailsRollsBack(t *testing.T) {
 	}
 }
 
+// TestBackup_MidRunWriteFailureRollsBack — не-ENOSPC сбой записи
+// части 2 из 2 (после зафиксированной части 1): запуск обязан
+// закончиться атомарно — закоммиченная часть 1 откатывается из
+// каталога, иначе цепочка с указателем продолжения на кассете 1
+// осталась бы висящей.
+func TestBackup_MidRunWriteFailureRollsBack(t *testing.T) {
+	h, _, _ := spanHarness(t, twoParts(), 100)
+	boom := errors.New("mid-run boom")
+	h.codec.ErrWriteOnce = boom
+	h.codec.ErrWriteOn = 2 // часть 1 записана и закоммичена, часть 2 падает
+	_, err := h.uc.Backup(context.Background(), "daily", backup.Options{})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Backup: %v; want boom", err)
+	}
+	sessions, _ := h.cat.ListSessions(context.Background(), "tape-uuid")
+	if len(sessions) != 0 {
+		t.Fatalf("каталог не пуст после сбоя середины запуска: %+v", sessions)
+	}
+	if h.codec.WriteCalls != 2 {
+		t.Errorf("WriteSession вызовов %d; want 2 (обе части пытались записаться)", h.codec.WriteCalls)
+	}
+}
+
 // TestBackup_SinglePartSkipsChanger — одна часть: changer не вызывается.
 func TestBackup_SinglePartSkipsChanger(t *testing.T) {
 	h, _, ch := spanHarness(t, map[string]string{"etc/a": strings.Repeat("a", 60)}, 1000)

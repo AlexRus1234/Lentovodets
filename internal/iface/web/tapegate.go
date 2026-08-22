@@ -81,15 +81,43 @@ func (g *tapeGate) probe(fn func() error) bool {
 	return fn() == nil
 }
 
-// acquireTask захватывает устройство на время фоновой задачи: выставляет
-// taskHeld и ждёт (shortMu) завершения текущей короткой операции.
-// Вызывается единственной задачей — вторую не пускает реестр задач
-// (StartIfIdle); shortMu не реентерабелен.
-func (g *tapeGate) acquireTask() {
+// reserveTask резервирует устройство для фоновой задачи до её запуска:
+// taskHeld выставляется немедленно (новые короткие операции получают
+// 409), чтобы между регистрацией задачи в реестре и началом её
+// горутины ни одна короткая операция не успела открыть устройство
+// (гонка → EBUSY у задачи). false — устройством уже владеет задача.
+func (g *tapeGate) reserveTask() bool {
 	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.taskHeld {
+		return false
+	}
 	g.taskHeld = true
+	return true
+}
+
+// unreserveTask снимает резерв, если задача так и не стартовала (сбой
+// регистрации в реестре); shortMu в этот момент не взят.
+func (g *tapeGate) unreserveTask() {
+	g.mu.Lock()
+	g.taskHeld = false
 	g.mu.Unlock()
+}
+
+// waitShortOps дожидается текущей короткой операции (shortMu).
+// Вызывается горутиной зарезервированной задачи до открытия ленты;
+// задача обязана завершиться releaseTask.
+func (g *tapeGate) waitShortOps() {
 	g.shortMu.Lock()
+}
+
+// acquireTask захватывает устройство на время фоновой задачи:
+// reserveTask + waitShortOps. Вызывается единственной задачей —
+// вторую не пускают реестр задач (StartIfIdle) и reserveTask;
+// shortMu не реентерабелен.
+func (g *tapeGate) acquireTask() {
+	g.reserveTask()
+	g.waitShortOps()
 }
 
 // releaseTask освобождает устройство после фоновой задачи; обязателен

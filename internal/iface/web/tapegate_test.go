@@ -168,3 +168,35 @@ func TestTapeGate_BusyErrorText(t *testing.T) {
 		t.Fatalf("текст tapeBusyError: %q", got)
 	}
 }
+
+// TestTapeGate_ReserveBeforeLaunch — резерв задачи (startTapeTask)
+// отклоняет короткие операции ещё до запуска горутины задачи: гонка
+// «задача зарегистрирована, гейт не взят» больше не даёт короткой
+// операции открыть устройство. Второй резерв невозможен; unreserve
+// возвращает всё как было.
+func TestTapeGate_ReserveBeforeLaunch(t *testing.T) {
+	var g tapeGate
+	if !g.reserveTask() {
+		t.Fatal("первый reserveTask: false, want true")
+	}
+	if g.reserveTask() {
+		t.Fatal("второй reserveTask: true, want false (устройство зарезервировано)")
+	}
+	// зарезервировано — короткие операции отклоняются, probe «занято»
+	if !errors.As(g.withOp(func() error { return nil }), new(tapeBusyError)) {
+		t.Fatal("withOp после reserve: нет tapeBusyError")
+	}
+	if !g.probe(func() error { return nil }) {
+		t.Fatal("probe после reserve: false, want true")
+	}
+
+	// отмена старта: unreserve возвращает устройство коротким операциям
+	g.unreserveTask()
+	if err := g.withOp(func() error { return nil }); err != nil {
+		t.Fatalf("withOp после unreserve: %v", err)
+	}
+	if !g.reserveTask() {
+		t.Fatal("reserveTask после unreserve: false, want true")
+	}
+	g.unreserveTask()
+}

@@ -433,6 +433,7 @@ type failTape struct {
 	*testutil.FakeTape
 	rewindErr error
 	ejectErr  error
+	readErr   error
 }
 
 func (t *failTape) Rewind(ctx context.Context) error {
@@ -447,6 +448,23 @@ func (t *failTape) Eject(ctx context.Context) error {
 		return t.ejectErr
 	}
 	return t.FakeTape.Eject(ctx)
+}
+
+func (t *failTape) ReadBlock(ctx context.Context) ([]byte, error) {
+	if t.readErr != nil {
+		return nil, t.readErr
+	}
+	return t.FakeTape.ReadBlock(ctx)
+}
+
+// diagTape — лента с диагностическим интерфейсом, всегда недоступным
+// (ветка TapeInfo «tapealert unavailable»).
+type diagTape struct {
+	*testutil.FakeTape
+}
+
+func (t *diagTape) TapeAlerts(ctx context.Context) ([]domain.TapeAlert, error) {
+	return nil, errors.New("sg io unavailable")
 }
 
 func TestCatalog_TapeOperationErrors(t *testing.T) {
@@ -560,3 +578,51 @@ type progRec struct{ done int }
 func (p *progRec) Update(port.ProgressUpdate) {}
 func (p *progRec) Done()                      { p.done++ }
 func (p *progRec) Fail(error)                 {}
+
+// TestCatalog_Copies — все копии точного пути, от новых к старым.
+func TestCatalog_Copies(t *testing.T) {
+	cat, _, _ := seedCatalog(t)
+	uc := newCatalogUC(cat, nil, nil)
+	copies, err := uc.Copies(context.Background(), "/etc/hosts")
+	if err != nil {
+		t.Fatalf("Copies: %v", err)
+	}
+	if len(copies) != 2 {
+		t.Fatalf("копий %d; want 2", len(copies))
+	}
+	if copies[0].SessionNum != 2 { // новые раньше
+		t.Errorf("первая копия из сессии %d; want 2", copies[0].SessionNum)
+	}
+}
+
+// TestCatalog_TapeInfoErrors — сбои перемотки и чтения ярлыка.
+func TestCatalog_TapeInfoErrors(t *testing.T) {
+	cat, _, _ := seedCatalog(t)
+	codec := &testutil.FakeCodec{}
+	t.Run("перемотка не удалась", func(t *testing.T) {
+		tape := labeledTape(t, codec)
+		uc := newCatalogUC(cat, &failTape{FakeTape: tape, rewindErr: errors.New("boom")}, codec)
+		if _, err := uc.TapeInfo(context.Background()); err == nil {
+			t.Fatal("TapeInfo при сбое перемотки: нет ошибки")
+		}
+	})
+	t.Run("чтение блока не удалось", func(t *testing.T) {
+		tape := labeledTape(t, codec)
+		uc := newCatalogUC(cat, &failTape{FakeTape: tape, readErr: errors.New("boom")}, codec)
+		if _, err := uc.TapeInfo(context.Background()); err == nil {
+			t.Fatal("TapeInfo при сбое чтения: нет ошибки")
+		}
+	})
+	t.Run("диагностика tapealert недоступна", func(t *testing.T) {
+		tape := labeledTape(t, codec)
+		diag := &diagTape{FakeTape: tape}
+		uc := newCatalogUC(cat, diag, codec)
+		info, err := uc.TapeInfo(context.Background())
+		if err != nil {
+			t.Fatalf("TapeInfo: %v", err)
+		}
+		if info.Alerts != nil {
+			t.Errorf("Alerts при недоступной диагностике: %v", info.Alerts)
+		}
+	})
+}

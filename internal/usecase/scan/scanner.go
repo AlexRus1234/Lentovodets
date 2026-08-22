@@ -124,10 +124,16 @@ func (s *Scanner) scanEntry(
 	links map[string]string,
 ) (domain.FileMeta, bool, bool, error) {
 	p := domain.NormalizePath(path)
-	if excludedPath(p, job.Exclude) || seen[p] {
+	if seen[p] {
+		return domain.FileMeta{}, false, false, nil // перекрытие корней / исключён ранее
+	}
+	// seen отмечается и для исключённых путей: exclude — «не смотреть»,
+	// а не «удалено». Иначе путь, исключённый между запусками mirror,
+	// получал бы tombstone, и восстановление mirror удаляло бы живой файл.
+	seen[p] = true
+	if excludedPath(p, job.Exclude) {
 		return domain.FileMeta{}, false, false, nil
 	}
-	seen[p] = true
 	if port.IsSpecial(info.Mode()) {
 		s.log.Warn("special filesystem entry skipped", slog.String("path", p))
 		return domain.FileMeta{}, false, true, nil

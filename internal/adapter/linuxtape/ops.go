@@ -22,10 +22,13 @@
 package linuxtape
 
 import (
+	"errors"
 	"fmt"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+
+	"lentovodec/internal/domain"
 )
 
 // mtIOCTOP — код ioctl MTIOCTOP = _IOW('m', 1, struct mtop) при
@@ -74,6 +77,22 @@ func sendTapeCommand(fd uintptr, op int16, count int32) error {
 			// безопасен: команда ещё не началась.
 			continue
 		}
-		return fmt.Errorf("linuxtape: ioctl op=%d count=%d: %w", op, count, errno)
+		return fmt.Errorf("linuxtape: ioctl op=%d count=%d: %w", op, count, errnoAsDomain(errno))
+	}
+}
+
+// errnoAsDomain типизирует знакомые errno стримера: ENOMEDIUM — нет
+// кассеты, ENOSPC — лента кончилась. Адаптер — единственное место,
+// где errno ещё различим; iface- и usecase-слои ловят
+// errors.As(*domain.NoMediumError / *domain.TapeFullError), не
+// разбирая тексты ошибок.
+func errnoAsDomain(err error) error {
+	switch {
+	case errors.Is(err, unix.ENOMEDIUM):
+		return errors.Join(&domain.NoMediumError{}, err)
+	case errors.Is(err, unix.ENOSPC):
+		return errors.Join(&domain.TapeFullError{}, err)
+	default:
+		return err
 	}
 }

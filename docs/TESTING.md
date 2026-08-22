@@ -179,8 +179,10 @@ JSON-ярлыки в golden-тестах. `StepClock` даёт строго во
 | `internal/iface/web`                 | 70-80%   | handler-тесты                   |
 | **Итог по `internal/`**              | **≥ 90%**|                                 |
 
-Эти цифры проверяются в CI (Этап 10) через `go test -coverprofile` + скрипт
-или `go-toolcover` с порогами.
+Эти цифры проверяются командой `make cover-check` (Этап 10): профиль
+`go test -coverprofile` сверяется с порогами этой таблицы утилитой
+`tools/covercheck`; `internal/testutil` — тестовые двойники, в итог
+не входят.
 
 ## 5. Что проверяем в use case-тестах
 

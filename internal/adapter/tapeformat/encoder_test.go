@@ -116,7 +116,7 @@ func TestWriteSession_MultiBlockIndex(t *testing.T) {
 	if err := tape.Rewind(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil), nil)
+	got, err := tapeformat.ReadSession(context.Background(), tape, testutil.NewMapFS(nil), nil, nil)
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}

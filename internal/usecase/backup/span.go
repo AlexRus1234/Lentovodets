@@ -75,9 +75,18 @@ func (uc *UseCase) writeParts(
 	isFull bool,
 	stats Stats,
 ) (Result, error) {
+	// FULL-рестарт переписывает ленту с сессии 1 (FORMAT §10): старые
+	// сессии кассеты (уже удалённые из каталога) не считаются —
+	// позиционирование MTFSF(1), а не MTFSF(2K+1) за ними. Иначе
+	// следующая INC-сессия позиционировалась бы по каталогу (сессия 1)
+	// и перезаписывала бы только что записанный FULL.
+	lastNum := st.lastNum
+	if isFull {
+		lastNum = 0
+	}
 	r := &spanRun{
 		uc: uc, st: st, plan: plan, isFull: isFull, ctx: ctx,
-		ts:     spanTape{tape: uc.tape, label: st.label, lastNum: st.lastNum},
+		ts:     spanTape{tape: uc.tape, label: st.label, lastNum: lastNum},
 		budget: plan.budget,
 		verify: opts.Verify,
 	}
@@ -129,21 +138,24 @@ func (r *spanRun) run(ctx context.Context) error {
 	for k := 0; k < len(r.plan.parts); k++ {
 		sess, cont, err := r.beginPart(ctx, k)
 		if err != nil {
-			return err
+			return err // beginPart откатывает сам (rollbackRun)
 		}
 		werr := r.uc.writePart(ctx, r.st.job, r.ts.tape, sess, r.plan.parts[k],
 			r.ts.lastNum, r.ts.continues, cont)
 		if werr == nil {
 			if err := r.commit(ctx, k, sess); err != nil {
-				return err
+				return err // commit откатывает сам (rollbackRun / VerifyError)
 			}
 			continue
 		}
+		// writePart уже откатил свою сессию и восстановил EOD; после
+		// первого коммита частичная цепочка в каталоге бессвязна —
+		// откатываем и её (запуск атомарно не завершён)
 		if !r.canMoveAfterFull(werr) {
-			return werr
+			return r.rollbackRun(werr)
 		}
 		if err := r.moveAfterENOSPC(ctx, k, sess); err != nil {
-			return errors.Join(werr, err)
+			return errors.Join(werr, err) // moveAfterENOSPC откатывает сам
 		}
 		k-- // часть уходит на новую кассету целиком — повторяем тот же k
 	}
@@ -185,7 +197,7 @@ func (r *spanRun) beginPart(ctx context.Context, k int) (domain.Session, *port.C
 	var err error
 	sess.ID, err = r.uc.cat.CreateSession(ctx, sess)
 	if err != nil {
-		return domain.Session{}, nil, fmt.Errorf("backup: создание сессии: %w", err)
+		return domain.Session{}, nil, r.rollbackRun(fmt.Errorf("backup: создание сессии: %w", err))
 	}
 	return sess, cont, nil
 }
@@ -194,12 +206,14 @@ func (r *spanRun) beginPart(ctx context.Context, k int) (domain.Session, *port.C
 // при включённой верификации часть перечитывается со сверкой хешей
 // (до плановой смены кассеты — после eject прочитать нечем), сбой
 // верификации — VerifyError без откката: данные уже на ленте и в
-// каталоге, перезапись не лечит носитель. Для незаключительной части —
-// плановая смена кассеты.
+// каталоге, перезапись не лечит носитель. Сбой SaveFiles откатывает
+// цепочку запуска: сессия без файлов делала бы каталог бессвязным.
+// Для незаключительной части — плановая смена кассеты.
 func (r *spanRun) commit(ctx context.Context, k int, sess domain.Session) error {
 	r.uc.progUpdate(port.ProgressUpdate{Phase: port.PhaseFinalize})
+	r.created = append(r.created, sess.ID)
 	if err := r.uc.cat.SaveFiles(ctx, sess.ID, r.plan.parts[k]); err != nil {
-		return fmt.Errorf("backup: сохранение файлов сессии %d: %w", sess.ID, err)
+		return r.rollbackRun(fmt.Errorf("backup: сохранение файлов сессии %d: %w", sess.ID, err))
 	}
 	if r.verify {
 		files, bytes, err := r.uc.verifyPart(ctx, r.ts.tape, sess, r.plan.parts[k])
@@ -210,7 +224,6 @@ func (r *spanRun) commit(ctx context.Context, k int, sess domain.Session) error 
 		r.verifiedBytes += bytes
 	}
 	r.ts.lastNum = sess.Num
-	r.created = append(r.created, sess.ID)
 	if !r.firstSet {
 		r.first, r.firstSet = sess, true
 	}
@@ -296,10 +309,11 @@ func (r *spanRun) moveAfterENOSPC(ctx context.Context, k int, sess domain.Sessio
 }
 
 // rollbackRun откатывает зафиксированные сессии запуска из каталога:
-// смена кассеты не состоялась, цепочка не собрана — запуск атомарно
-// не завершён. Откат идёт в контексте без отмены (сам ctx может быть
-// уже закрыт); данные на лентах остаются, повторный запуск перепишет
-// указатели продолжения.
+// часть не записалась или смена кассеты не состоялась — цепочка не
+// собрана, запуск атомарно не завершён (лента N с указателем
+// продолжения без части N+1 — не восстановимая связность). Откат идёт
+// в контексте без отмены (сам ctx может быть уже закрыт); данные на
+// лентах остаются, повторный запуск перепишет указатели продолжения.
 func (r *spanRun) rollbackRun(cause error) error {
 	ctx := context.WithoutCancel(r.ctx)
 	for _, id := range r.created {

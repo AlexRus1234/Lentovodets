@@ -98,11 +98,21 @@ type Catalog struct {
 	db *sql.DB
 }
 
-// New открывает (или создаёт) каталог по пути path, включает PRAGMA
-// foreign_keys / journal_mode=WAL / busy_timeout и применяет схему.
-// Спец-путь ":memory:" — база в памяти (для тестов).
+// dsnSuffix — соединительные PRAGMA в DSN: применяются драйвером к
+// КАЖДОМУ соединению пула. Прежний способ (Exec в init) действовал
+// только на текущее соединение: database/sql молча переоткрывает
+// соединения (ошибка, вытеснение из пула), и на свежем соединении
+// пропадали foreign_keys/busy_timeout. Формат параметров — контракт
+// modernc.org/sqlite (doc драйвера); ':' и '\' в путях не конфликтуют
+// с разбором: DSN режется по первому '?'.
+const dsnSuffix = "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+
+// New открывает (или создаёт) каталог по пути path; PRAGMA соединения
+// заданы в DSN (busy_timeout, foreign_keys, journal_mode=WAL),
+// применяются миграции и схема. Спец-путь ":memory:" — база в памяти
+// (для тестов).
 func New(path string) (*Catalog, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+dsnSuffix)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: открытие %q: %w", path, err)
 	}
@@ -118,19 +128,8 @@ func New(path string) (*Catalog, error) {
 	return c, nil
 }
 
-// init применяет PRAGMA, миграции и схему (см. doc пакета и
-// SPECIFICATION §3.1).
+// init применяет миграции и схему (см. doc пакета и SPECIFICATION §3.1).
 func (c *Catalog) init() error {
-	pragmas := [...]string{
-		`PRAGMA foreign_keys = ON`,
-		`PRAGMA journal_mode = WAL`,
-		`PRAGMA busy_timeout = 5000`,
-	}
-	for _, p := range pragmas {
-		if _, err := c.db.Exec(p); err != nil {
-			return fmt.Errorf("sqlite: %s: %w", p, err)
-		}
-	}
 	if err := c.applyMigrations(); err != nil {
 		return err
 	}

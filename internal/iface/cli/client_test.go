@@ -182,3 +182,19 @@ func TestHTTPClient_Unreachable(t *testing.T) {
 		t.Fatal("недоступный демон = nil")
 	}
 }
+
+// TestClient_ResponseTooLarge — ответ сверх лимита 1 МиБ даёт внятную
+// ошибку вместо тихо обрезанного JSON.
+func TestClient_ResponseTooLarge(t *testing.T) {
+	big := strings.Repeat("a", (1<<20)+2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(big))
+	}))
+	defer srv.Close()
+
+	c := cli.Dial(srv.URL, "", "", nil)
+	_, err := c.TapeInfo(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "превышает") {
+		t.Fatalf("TapeInfo: %v; want ошибка превышения лимита", err)
+	}
+}

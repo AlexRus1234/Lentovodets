@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
@@ -513,8 +512,9 @@ func statsOf(files []domain.FileMeta) Stats {
 	return st
 }
 
-// mapTapeFull превращает ошибки записи, означающие конец ленты, в
-// *domain.TapeFullError с заполненным Written; прочие ошибки — как есть.
+// mapTapeFull дозаполняет *domain.TapeFullError числом записанных
+// байт (адаптеры filetape/linuxtape уже типизируют ENOSPC); прочие
+// ошибки — как есть.
 func mapTapeFull(err error, written int64) error {
 	var full *domain.TapeFullError
 	if errors.As(err, &full) {
@@ -522,9 +522,6 @@ func mapTapeFull(err error, written int64) error {
 			full.Written = written
 		}
 		return full
-	}
-	if strings.Contains(err.Error(), "no space left on device") {
-		return errors.Join(&domain.TapeFullError{Written: written}, err)
 	}
 	return err
 }

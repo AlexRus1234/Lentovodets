@@ -66,14 +66,15 @@ func (Codec) WriteSession(
 }
 
 // ReadSession читает сессию с текущей позиции ленты; dest == nil —
-// режим проверки.
+// режим проверки; include != nil — выборочное восстановление.
 func (Codec) ReadSession(
 	ctx context.Context,
 	tape port.Tape,
 	dest port.FileWriter,
+	include func(path string) bool,
 	prog port.ProgressReporter,
 ) ([]domain.FileMeta, error) {
-	return ReadSession(ctx, tape, dest, prog)
+	return ReadSession(ctx, tape, dest, include, prog)
 }
 
 // ReadHeader читает заголовок сессии (индекс без tar) с текущей

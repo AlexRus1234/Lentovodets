@@ -20,11 +20,13 @@
 package tomlconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -72,7 +74,12 @@ const (
 // содержимое TOML-файла. Запись AddJob/RemoveJob идёт через file,
 // поэтому значения из env и флагов в файл не протекают (секреты и
 // путь устройства пользователя остаются как были).
+//
+// Все методы под мьютексом: демон читает конфиг горутиной задачи
+// (Capacity/MinTail/Jobs) параллельно с редактированием заданий из
+// HTTP; viper не потокобезопасен.
 type Config struct {
+	mu   sync.Mutex
 	read *viper.Viper
 	file *viper.Viper
 	path string
@@ -82,20 +89,28 @@ type Config struct {
 // docs/ARCHITECTURE.md §6.5). Отсутствующий файл — не ошибка: работают
 // defaults/env/флаги. flagOverrides — значения выставленных флагов CLI
 // (ключ → значение; пустые строки игнорируются), наивысший приоритет.
+// Файл читается с диска один раз: оба представления строятся из одних
+// байт (нет окна TOCTOU между двумя чтениями).
 func New(path string, flagOverrides map[string]string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("tomlconfig: чтение %s: %w", path, err)
+	}
 	file := viper.New()
-	file.SetConfigFile(path)
 	file.SetConfigType("toml")
-	if err := readTolerantMissing(file, path); err != nil {
-		return nil, err
+	if len(raw) > 0 {
+		if err := file.ReadConfig(bytes.NewReader(raw)); err != nil {
+			return nil, fmt.Errorf("tomlconfig: разбор %s: %w", path, err)
+		}
 	}
 
 	read := viper.New()
 	setDefaults(read)
-	read.SetConfigFile(path)
 	read.SetConfigType("toml")
-	if err := readTolerantMissing(read, path); err != nil {
-		return nil, err
+	if len(raw) > 0 {
+		if err := read.ReadConfig(bytes.NewReader(raw)); err != nil {
+			return nil, fmt.Errorf("tomlconfig: разбор %s: %w", path, err)
+		}
 	}
 	read.SetEnvPrefix("LENTOVODEC")
 	read.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -106,17 +121,6 @@ func New(path string, flagOverrides map[string]string) (*Config, error) {
 		}
 	}
 	return &Config{read: read, file: file, path: path}, nil
-}
-
-// readTolerantMissing читает TOML-файл в v; отсутствующий файл — не ошибка.
-func readTolerantMissing(v *viper.Viper, path string) error {
-	if err := v.ReadInConfig(); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("tomlconfig: чтение %s: %w", path, err)
-	}
-	return nil
 }
 
 // setDefaults задаёт значения по умолчанию (нижний слой).
@@ -136,39 +140,77 @@ func setDefaults(v *viper.Viper) {
 }
 
 // Device — путь к устройству ленты.
-func (c *Config) Device() string { return c.read.GetString(keyDevice) }
+func (c *Config) Device() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyDevice)
+}
 
 // DB — путь к SQLite-каталогу.
-func (c *Config) DB() string { return c.read.GetString(keyDB) }
+func (c *Config) DB() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyDB)
+}
 
 // Log — путь к файлу лога.
-func (c *Config) Log() string { return c.read.GetString(keyLog) }
+func (c *Config) Log() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyLog)
+}
 
 // Server — адрес демона для клиентских команд.
-func (c *Config) Server() string { return c.read.GetString(keyServer) }
+func (c *Config) Server() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyServer)
+}
 
 // LogLevel — уровень логирования: debug|info|warn|error.
-func (c *Config) LogLevel() string { return c.read.GetString(keyLogLevel) }
+func (c *Config) LogLevel() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyLogLevel)
+}
 
 // Bind — адрес, на котором слушает демон (SPECIFICATION §8, §9.2).
-func (c *Config) Bind() string { return c.read.GetString(keyBind) }
+func (c *Config) Bind() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyBind)
+}
 
 // WebUsername — единственная учётка демона; "" — аутентификация
 // выключена (разрешено только при bind на loopback).
-func (c *Config) WebUsername() string { return c.read.GetString(keyWebUsername) }
+func (c *Config) WebUsername() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.read.GetString(keyWebUsername)
+}
 
 // WebPasswordHash — bcrypt-хеш пароля демона. Читается только из TOML
 // (file-viper без env-слоя): секреты через env не передаются
 // (SPECIFICATION §8).
-func (c *Config) WebPasswordHash() string { return c.file.GetString(keyWebPasswordHash) }
+func (c *Config) WebPasswordHash() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.file.GetString(keyWebPasswordHash)
+}
 
 // APIKey — ключ для скриптов (X-API-Key); "" — отключён. Как и пароль,
 // только из TOML (SPECIFICATION §8).
-func (c *Config) APIKey() string { return c.file.GetString(keyAPIKey) }
+func (c *Config) APIKey() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.file.GetString(keyAPIKey)
+}
 
 // SessionTTL — время жизни сессий логина; некорректное значение
 // молча заменяется на дефолт 72h.
 func (c *Config) SessionTTL() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	d, err := time.ParseDuration(c.read.GetString(keySessionTTL))
 	if err != nil || d <= 0 {
 		return 72 * time.Hour
@@ -177,10 +219,16 @@ func (c *Config) SessionTTL() time.Duration {
 }
 
 // WebhookURL — URL для уведомлений о завершённых задачах; пустой URL отключает их.
-func (c *Config) WebhookURL() string { return strings.TrimSpace(c.file.GetString(keyWebhookURL)) }
+func (c *Config) WebhookURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.TrimSpace(c.file.GetString(keyWebhookURL))
+}
 
 // WebhookTimeout — таймаут одного HTTP-запроса webhook.
 func (c *Config) WebhookTimeout() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	d, err := time.ParseDuration(c.read.GetString(keyWebhookTimeout))
 	if err != nil || d <= 0 {
 		return 10 * time.Second
@@ -194,6 +242,14 @@ func (c *Config) WebhookTimeout() time.Duration {
 // или пуст — 0: spanning выключен, поведение одной кассеты. Битая
 // строка — ошибка.
 func (c *Config) Capacity() (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.capacityLocked()
+}
+
+// capacityLocked читает capacity без захвата мьютекса (уже под
+// блокировкой — вызывается из MinTail).
+func (c *Config) capacityLocked() (int64, error) {
 	raw := strings.TrimSpace(c.read.GetString(keyCapacity))
 	if raw == "" {
 		return 0, nil
@@ -211,6 +267,8 @@ func (c *Config) Capacity() (int64, error) {
 // capacity, но не меньше одного блока ленты (domain.BlockSize);
 // без capacity — 0.
 func (c *Config) MinTail() (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	raw := strings.TrimSpace(c.read.GetString(keyMinTail))
 	if raw != "" {
 		n, err := domain.ParseSize(raw)
@@ -219,7 +277,7 @@ func (c *Config) MinTail() (int64, error) {
 		}
 		return n, nil
 	}
-	capacity, err := c.Capacity()
+	capacity, err := c.capacityLocked()
 	if err != nil || capacity == 0 {
 		return 0, err
 	}
@@ -233,6 +291,8 @@ func (c *Config) MinTail() (int64, error) {
 // RawTOML — содержимое конфигурационного файла как текст (для
 // GET /api/config). Отсутствующий файл — пустая строка без ошибки.
 func (c *Config) RawTOML() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	raw, err := os.ReadFile(c.path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
@@ -245,6 +305,13 @@ func (c *Config) RawTOML() (string, error) {
 
 // Jobs — задания бекапа из секции [[jobs]].
 func (c *Config) Jobs() ([]domain.Job, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.jobsLocked()
+}
+
+// jobsLocked читает задания без захвата мьютекса (уже под блокировкой).
+func (c *Config) jobsLocked() ([]domain.Job, error) {
 	var jobs []domain.Job
 	if err := c.read.UnmarshalKey(keyJobs, &jobs); err != nil {
 		return nil, fmt.Errorf("tomlconfig: разбор секции [[jobs]]: %w", err)

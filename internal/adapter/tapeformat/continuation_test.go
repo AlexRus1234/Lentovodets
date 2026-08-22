@@ -175,10 +175,10 @@ func TestReadSession_ContinuationError(t *testing.T) {
 	if err := tape.Rewind(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tapeformat.ReadSession(ctx, tape, nil, nil); err != nil {
+	if _, err := tapeformat.ReadSession(ctx, tape, nil, nil, nil); err != nil {
 		t.Fatalf("первая сессия: %v", err)
 	}
-	_, err := tapeformat.ReadSession(ctx, tape, nil, nil)
+	_, err := tapeformat.ReadSession(ctx, tape, nil, nil, nil)
 	var cont *domain.ContinuationError
 	if !errors.As(err, &cont) {
 		t.Fatalf("err = %v; want ContinuationError", err)

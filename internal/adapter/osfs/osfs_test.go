@@ -22,7 +22,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -166,9 +165,6 @@ func TestWalk_RootNotFound(t *testing.T) {
 }
 
 func TestWalk_SymlinkIsNotDereferenced(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink privileges are environment-dependent on Windows")
-	}
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
 	link := filepath.Join(root, "link")
@@ -199,23 +195,20 @@ func TestWalk_SymlinkIsNotDereferenced(t *testing.T) {
 	}
 }
 
-func TestOSFS_SymlinkAndHardlinkRoundTrip(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink privileges are environment-dependent on Windows")
-	}
+// TestOSFS_HardlinkRoundTrip — жёсткие ссылки работают на всех
+// поддерживаемых платформах (NTFS без особых привилегий); LinkID
+// владельца и второй ссылки совпадает (Linux: inode; платформы без
+// экспонирования inode: тот же пустой идентификатор).
+func TestOSFS_HardlinkRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	f := osfs.New()
 	first := filepath.Join(root, "first")
 	second := filepath.Join(root, "second")
-	link := filepath.Join(root, "link")
 	if err := os.WriteFile(first, []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Link(first, second); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Symlink("missing", link); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
+		t.Skipf("hardlink unavailable: %v", err)
 	}
 	firstInfo, err := os.Stat(first)
 	if err != nil {
@@ -223,10 +216,89 @@ func TestOSFS_SymlinkAndHardlinkRoundTrip(t *testing.T) {
 	}
 	secondInfo, err := os.Stat(second)
 	if err != nil || !os.SameFile(firstInfo, secondInfo) {
-		t.Fatalf("hardlink identity: %v, %v, same=%v", firstInfo, secondInfo, err == nil && os.SameFile(firstInfo, secondInfo))
+		t.Fatalf("hardlink identity: err=%v", err)
+	}
+	// LinkID через Walk: у пары хардлинков идентификатор совпадает
+	ids := map[string]string{}
+	err = f.Walk(context.Background(), root, func(p string, info port.Entry) error {
+		ids[filepath.Base(p)] = info.LinkID()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids["first"] != ids["second"] {
+		t.Errorf("LinkID пары хардлинков: %q vs %q", ids["first"], ids["second"])
+	}
+
+	// Link поверх существующего newname: файл заменяется ссылкой
+	if err := f.Link(first, second); err != nil {
+		t.Fatalf("Link поверх существующего: %v", err)
+	}
+}
+
+// TestOSFS_SymlinkRoundTrip — симлинки: dangling-цель читается,
+// Symlink поверх существующего файла заменяет его; платформы без
+// привилегий на симлинки пропускают тест.
+func TestOSFS_SymlinkRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	f := osfs.New()
+	link := filepath.Join(root, "link")
+	if err := f.Symlink("missing", link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
 	}
 	if got, err := f.Readlink(link); err != nil || got != "missing" {
 		t.Fatalf("dangling Readlink = %q, %v", got, err)
+	}
+
+	// Symlink поверх существующего файла: remove + create
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Symlink("missing", file); err != nil {
+		t.Fatalf("Symlink поверх файла: %v", err)
+	}
+	if got, err := f.Readlink(file); err != nil || got != "missing" {
+		t.Fatalf("Readlink после замены = %q, %v", got, err)
+	}
+
+	// Symlink на путь непустого каталога: remove непустого каталога
+	// падает — ошибка возвращается, каталог не тронут
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "inner"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Symlink("x", sub); err == nil {
+		t.Error("Symlink поверх непустого каталога: нет ошибки")
+	}
+}
+
+// TestReadlink_NotALink — readlink обычного файла — ошибка.
+func TestReadlink_NotALink(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "plain")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := osfs.New().Readlink(file); err == nil {
+		t.Error("Readlink обычного файла: нет ошибки")
+	}
+}
+
+// TestMkdirAll_OverFileIsError — MkdirAll по пути существующего файла
+// — ошибка (не молчаливый успех).
+func TestMkdirAll_OverFileIsError(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "plain")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := osfs.New().MkdirAll(file, 0o755); err == nil {
+		t.Error("MkdirAll поверх файла: нет ошибки")
 	}
 }
 
@@ -424,5 +496,16 @@ func TestRemove_Missing(t *testing.T) {
 	err := f.Remove(filepath.Join(t.TempDir(), "нет"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+// TestLink_MissingOldname — Link на несуществующий владелец — ошибка.
+func TestLink_MissingOldname(t *testing.T) {
+	root := t.TempDir()
+	if err := osfs.New().Link(
+		filepath.Join(root, "no-such"),
+		filepath.Join(root, "second"),
+	); err == nil {
+		t.Error("Link с несуществующим oldname: нет ошибки")
 	}
 }

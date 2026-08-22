@@ -137,6 +137,12 @@ func TestTypedErrors(t *testing.T) {
 			&domain.NoMediumError{},
 		},
 		{
+			"повреждение сессии",
+			&domain.SessionDamageError{},
+			"сессия повреждена",
+			&domain.SessionDamageError{},
+		},
+		{
 			"сессия не читается обратно",
 			&domain.VerifyError{SessionNum: 3, Details: "файл повреждён"},
 			"сессия 3 записана, но не читается обратно: файл повреждён",
