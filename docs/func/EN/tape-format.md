@@ -61,9 +61,7 @@ filemark.
 `2K + 3` filemarks — two per session, one after the label, and a double
 one at the end (EOD). This makes positioning deterministic: the start
 of session K's index is `MTFSF(2K−1)`, the start of its tar is
-`MTFSF(2K)`. In legacy nil-backup, filemarks between sessions were not
-written, which made "smart" restore fragile — this is fixed here and
-pinned by tests.
+`MTFSF(2K)`. The invariant is pinned by tests.
 
 ---
 
@@ -169,9 +167,7 @@ of the tape.
 - Reading: an equal version — OK; older — supported with a warning in
   the log; newer — the operation is aborted (`ErrNewerFormat`).
 - A `magic` not starting with `LENTOVODEC_TAPE_` — a foreign format
-  (`ErrForeignFormat`). **Legacy `nil-backup` cartridges are
-  deliberately not read**: old data is for the old binary, or a
-  conscious re-format with `--force`.
+  (`ErrForeignFormat`).
 
 ## The filetape emulator
 

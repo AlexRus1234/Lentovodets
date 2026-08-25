@@ -47,13 +47,13 @@ web/
 ## Команды
 
 - `make web-build` — установка зависимостей и сборка бандла в
-  `../internal/iface/web/assets/` (встраивается в бинарь через
+  `../internal/iface/web/assets/` (встраивается в исполняемый файл через
   `//go:embed`, в git не попадает).
 - `make web-dev` — dev-сервер Vite (`:5173`) с прокси `/api` на демона
   (`:29201`). Запустите `lentovodec daemon` рядом.
 - `cd web && npm run typecheck` — проверка типов (vue-tsc).
 
-## Заметки
+## Особенности реализации
 
 - Прогресс задач — поллинг `GET /api/tasks/{id}/progress` раз в секунду;
   WebSocket/SSE нет (SPEC §9.2).

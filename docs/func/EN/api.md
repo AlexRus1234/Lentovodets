@@ -37,14 +37,14 @@ require one of two methods:
 
 - An unauthenticated request → `401 {"error": "unauthorized", "code":
   "auth_required"}`.
-- A session is 256 random bits from `crypto/rand`, living in the
+- A session is 256 random bits from `crypto/rand`, stored in the
   daemon's memory (an in-memory map with a TTL of `session_ttl` from
-  the config, 72h by default, limit 1024). No JWT and no signatures:
-  revoking everything and anything = restarting the daemon.
+  the config, 72h by default, limit 1024). JWT and signatures are not
+  used; revoking all sessions is done by restarting the daemon.
 - The API key is compared in constant time (`crypto/subtle`); an empty
   `api_key` in TOML means the key is disabled.
 - Header-based authentication was chosen over cookies deliberately:
-  CSRF disappears as a class (a third-party page cannot attach a custom
+  CSRF is excluded (a third-party page cannot set a custom
   header).
 - **Rate limit** on `/api/auth/login`: 5 attempts / 30 s per IP, above
   that — `429`; the counter resets on a successful login.
@@ -105,8 +105,9 @@ path to a file instead of a directory.
 
 Drive access is serialized (the st driver allows a single open
 descriptor): during a background backup/restore task, tape operations
-return `409 {"code": "task_running"}` immediately instead of waiting
-for hours. A drive without a cartridge (ENOMEDIUM) — `409 {"error":
+immediately return `409 {"code": "task_running"}`, without waiting for
+the device to be released. A drive without a cartridge (ENOMEDIUM) —
+`409 {"error":
 "no cartridge in the drive", "code": "no_medium"}` instead of a raw
 errno.
 

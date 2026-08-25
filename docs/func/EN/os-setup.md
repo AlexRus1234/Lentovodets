@@ -79,9 +79,9 @@ The default group on `/dev/nst*` depends on the distribution:
 | Arch Linux                               | `root:storage` 0660  | **missing**  |
 
 Arch patches the default systemd udev rules
-(`0001-Use-Arch-Linux-device-access-groups.patch`): tape nodes go to
-the legacy `storage` group, and the `tape` group is not in the package
-at all. The typical first-install pitfall on Arch: the daemon starts,
+(`0001-Use-Arch-Linux-device-access-groups.patch`): tape devices get the
+`storage` group, and the `tape` group is not in the package
+at all. The typical first-install problem on Arch: the daemon starts,
 but the probe fails with `permission denied`; `ls -l /dev/nst0` shows
 `root storage`, and `usermod -aG tape` either refuses (no such group)
 or is useless.
@@ -238,20 +238,20 @@ The daemon is a "single-machine tool"; by default
 `bind = 127.0.0.1:29201` and the port is not visible from the network.
 
 **Remote management** — through an SSH tunnel (authentication and
-encryption come from SSH):
+encryption are provided by SSH):
 
 ```bash
 ssh -L 29201:127.0.0.1:29201 lentovodec@server
 # then on the local machine: http://localhost:29201
 ```
 
-**Direct LAN access** is a deliberate operator choice: change `bind`
+**Direct LAN access** is enabled by changing `bind`
 (for example, `192.168.1.10:29201` or `0.0.0.0:29201`, including via
 the `--bind`/`--port` flags). The daemon then **requires** configured
 authentication: a non-loopback bind without `web_password_hash` and
-`web_username` — a startup failure with a clear error. HTTP without
-TLS is an accepted homelab compromise; for TLS — a reverse proxy in
-front or an SSH tunnel.
+`web_username` — a startup failure with a diagnostic message. HTTP
+without TLS is an accepted compromise for a local network; when TLS is
+required, a reverse proxy or an SSH tunnel is used.
 
 Daemon authentication (bcrypt, sessions, `X-API-Key`, rate limit) —
 [api.md](api.md).
@@ -285,7 +285,7 @@ the FS.
 
 ---
 
-## Arch Linux specifics (first-install pitfalls)
+## Arch Linux specifics (first-install problems)
 
 1. **The `storage` group instead of `tape` on `/dev/nst*`, and no
    `tape` group** — Arch's patch over the default systemd rules; the

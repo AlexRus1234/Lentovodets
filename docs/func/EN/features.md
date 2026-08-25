@@ -90,9 +90,9 @@ always FULL.
 - `--dry-run` — scanning and statistics only, nothing written to the
   tape.
 - `--verify` — verify-after-write: freshly written sessions are read
-  back and checked against the index by xxhash. Why: LTO ECC protects
-  bits, not content — overwriting of adjacent tracks and servo data
-  errors are only caught by re-reading. The cost is roughly ×2 write
+  back and checked against the index by xxhash. LTO ECC protects bits,
+  not content: overwriting of adjacent tracks and servo data errors are
+  detected only by re-reading. The cost is roughly ×2 write
   time; only the sessions of the current run are checked (the whole
   cartridge is `tape readtest`, see "Tape and cartridges"); with
   spanning, each part is verified on its own cartridge before the
@@ -186,9 +186,6 @@ the tape is not fatal: smart restore will take an older healthy copy.
   TOML. A character device (`/dev/nst0`) is a real drive; a regular
   file is the `filetape` emulator (a non-existent path outside `/dev`
   is created as a new file tape).
-- Legacy `nil-backup` cartridges (`NIL_BACKUP_TAPE`) are deliberately
-  not read: `ErrForeignFormat` naming the magic string. Old data is only
-  readable by the old binary, or re-format consciously with `--force`.
 
 ### Cartridge capacity and multi-volume backups (spanning)
 
@@ -196,13 +193,12 @@ The `capacity` (estimated cartridge capacity, `"2.2T"` with a margin
 for LTO-6) and `min_tail` (remaining-space threshold; default — 5% of
 capacity) keys in TOML enable the part planner:
 
-- **An honest error before writing**: a single file larger than the
+- **Failure before writing**: a single file larger than the
   cartridge capacity (or its remaining space when appending) fails
   right after scanning, before the tape is touched; files are never cut
   into pieces.
 - **Remaining space when appending**: if less than `min_tail` is left on
-  the cartridge, the new session starts on a new cartridge instead of
-  cramming in a couple of gigabytes.
+  the cartridge, the new session starts on a new cartridge.
 - **Multi-volume backup**: a session that does not fit on one cartridge
   is written as parts onto several cartridges. Each part is a
   self-contained complete session (readable with plain GNU tar); the
@@ -219,14 +215,15 @@ capacity) keys in TOML enable the part planner:
 - **Directory-based splitting (`span_depth`)**: the per-job
   `span_depth` key (int, default 0) makes the planner cut parts along
   Nth-level directory boundaries under the job root instead of by
-  files: "does not fit — the whole group rolls back to the start of the
-  next directory". The benefit is locality: a subtree lives on one
+  files: a group that does not fit into the remainder of a part is
+  moved wholesale to the start of the next one. The benefit is
+  locality: a subtree lives on one
   cartridge, a selective restore of the subtree touches fewer
-  cartridges, and cartridge contents are intuitive ("movies on
+  cartridges, and cartridge contents are predictable ("movies on
   LTO-001"). A group larger than a whole cartridge is split by files
   inside it (a fallback — otherwise such a directory would never be
-  backed up); average cartridge fill is slightly worse than with
-  file-based splitting — a deliberate trade-off.
+  backed up); average cartridge fill is slightly lower than with
+  file-based splitting — a trade-off in favor of locality.
 
 Following the cartridge chain during restore and verification works in
 terminal mode (see below) and in the daemon (a task pausing for a tape
@@ -341,14 +338,14 @@ daemon).
 
 - By default `bind = 127.0.0.1:29201` — the daemon is not visible from
   the network; remote management goes through an SSH tunnel (encryption
-  and authentication come from SSH).
-- LAN access is a deliberate operator choice: a non-loopback `bind`
-  without a configured password — a startup failure with a clear error.
-- HTTP without TLS is an accepted homelab compromise (the token travels
-  over your own cable/WPA2); for TLS — a reverse proxy or an SSH
-  tunnel.
+  and authentication are provided by SSH).
+- LAN access is enabled by changing `bind`: a non-loopback address
+  without a configured password — a startup failure with a diagnostic
+  message.
+- HTTP without TLS is an accepted compromise for a local network;
+  when TLS is required, a reverse proxy or an SSH tunnel is used.
 
-### Honest model boundaries
+### Model limitations
 
 - One user, no roles.
 - Sessions do not survive a daemon restart (you will have to log in

@@ -29,7 +29,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | [cli.md](cli.md) | Справочник CLI: глобальные флаги, команды local/daemon, выбор устройства, примеры. |
 | [api.md](api.md) | REST API демона: аутентификация, эндпоинты, фоновые задачи и прогресс. |
 | [os-setup.md](os-setup.md) | Развёртывание в Linux: rootless-модель, группа `tape`, udev, systemd-юнит, сетевой доступ. |
-| [tape-format.md](tape-format.md) | Формат ленты глазами оператора: ярлык, сессии, filemark'и, совместимость. |
+| [tape-format.md](tape-format.md) | Формат ленты с точки зрения оператора: ярлык, сессии, filemark'и, совместимость. |
 
 Английская документация — в каталоге [`docs/func/EN/`](../EN/README.md).
 

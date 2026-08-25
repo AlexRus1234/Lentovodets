@@ -18,8 +18,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Стратегия тестирования
 
-Этот документ описывает, **как** мы достигаем 95%+ coverage по
-бизнес-логике без необходимости в реальном стримере.
+Документ описывает способ достижения покрытия 95%+ бизнес-логики без
+использования реального стримера.
 
 ## 1. Принципы
 
@@ -45,7 +45,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 ```bash
 go test ./...                              # unit + integration
 go test -race ./...                        # то же + race detector
-go test ./test/integration/... -count=5    # интеграционные (стандарт Этапа 9+)
+go test ./test/integration/... -count=5    # интеграционные, 5 прогонов
 go test -tags=tape ./test/hardware/...     # только вручную, на машине со стримером
 go test -cover ./internal/...              # coverage по бизнес-логике
 ```
@@ -60,7 +60,7 @@ filetape + osfs + sqlite + tapeformat + xxhash, фейки не использу
 | `mirror_test.go`      | mirror-сессии, tombstone'ы, реконструкция зеркала           |
 | `smart_restore_test.go` | копии файла, повреждённая копия, fallback                   |
 | `tapefull_test.go`    | ENOSPC-откат к старому EOD, readtest чистого хвоста, дозапись |
-| `spanning_test.go`    | дозапись с делением на две кассеты; ENOSPC-перенос части; restore full по цепочке (DR + каталог); контракт «голый tar» (`Rewind → FSF(2) → блоки до filemark → archive/tar`); mirror + spanning. Смена кассет — авто-фабрика `spanFarm` поверх `testutil.FuncChanger` (Этап 11) |
+| `spanning_test.go`    | дозапись с делением на две кассеты; ENOSPC-перенос части; restore full по цепочке (DR + каталог); контракт «tar без Лентоводца» (`Rewind → FSF(2) → блоки до filemark → archive/tar`); mirror + spanning. Смена кассет — авто-фабрика `spanFarm` поверх `testutil.FuncChanger` |
 | `hardware/spanning_test.go` | ручной сценарий на двух реальных кассетах (`tape && linux`), смена по промпту, DR-рецепт mt/dd/tar в шапке файла |
 
 ## 3. Test doubles
@@ -121,7 +121,7 @@ fs := testutil.NewMapFS(map[string]string{
 
 ### 3.3. `MemCatalog`
 
-Полная in-memory реализация `port.Catalog` (slayce map'ов с мьютексом).
+Полная in-memory реализация `port.Catalog` (набор map с мьютексом).
 Используется в use case-тестах, чтобы не зависеть от SQLite.
 
 ### 3.4. `NoProgress`
@@ -156,7 +156,7 @@ JSON-ярлыки в golden-тестах. `StepClock` даёт строго во
 ### 3.7. `FuncChanger`
 
 Двойник `port.TapeChanger` поверх замыканий (`Suggest`/`Close`/`Request`);
-незаданное замыкание заменяется разумным умолчанием, все запросы смены
+незаданное замыкание заменяется умолчанием, все запросы смены
 кассет запоминаются (`Requests`, `Closed`) — assertions на причины
 (`span`/`enospc`/`restore`) и порядок. В unit-тестах use case'ов выдаёт
 `FakeTape`-кассеты (фабрика `tapeFarm`); в интеграционных — файл-ленты
@@ -179,7 +179,7 @@ JSON-ярлыки в golden-тестах. `StepClock` даёт строго во
 | `internal/iface/web`                 | 70-80%   | handler-тесты                   |
 | **Итог по `internal/`**              | **≥ 90%**|                                 |
 
-Эти цифры проверяются командой `make cover-check` (Этап 10): профиль
+Эти цифры проверяются командой `make cover-check`: профиль
 `go test -coverprofile` сверяется с порогами этой таблицы утилитой
 `tools/covercheck`; `internal/testutil` — тестовые двойники, в итог
 не входят.
@@ -202,7 +202,7 @@ JSON-ярлыки в golden-тестах. `StepClock` даёт строго во
 ## 6. Чего мы не делаем
 
 - Не используем mock-генераторы (`mockery`, `gomock`). Фейки пишутся руками,
-  потому что они простые и нам их немного (один на каждый порт).
+  поскольку они просты и их немного (по одному на каждый порт).
 - Не тестируем приватные функции через `export_test.go` без необходимости.
   Если приватная функция сложная — выносим в отдельный тип или в `domain`.
 - Не гоняем интеграционные тесты на каждой правке: они живут в отдельном

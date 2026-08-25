@@ -138,7 +138,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
   сверкой хешей без записи на ФС, отчёт по каждой кассете цепочки),
   `eject`, `info` (ярлык + активные TapeAlert-флаги привода: необходимость
   чистки, ресурс носителя, ошибки чтения/записи)
-- Кассеты legacy `nil-backup` намеренно не читаются
 - Эмулятор `filetape`: обычный файл ведёт себя как лента — разработка и
   CI на любой ОС без стримера
 
@@ -151,7 +150,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
   переходит в `awaiting_tape` и продолжается через Web UI или
   `POST /api/tasks/{id}/continue`; webhook-уведомления о завершении задач
   (`webhook_url`)
-- Web UI (Vue 3, встроен в бинарь): лента, задания, каталог, файлы,
+- Web UI (Vue 3, встроен в исполняемый файл): лента, задания, каталог, файлы,
   восстановление; серверный файловый браузер (выбор корней задания и
   каталога назначения restore), история версий файла; русский и
   английский языки
@@ -180,11 +179,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 ```bash
 # Сборка Web UI и серверной части в порядке, используемом CI:
 make web-build
-make build        # бинарь bin/lentovodec (без драйвера стримера)
+make build        # исполняемый файл bin/lentovodec (без драйвера стримера)
 make build-tape   # то же + adapter/linuxtape (build tag `tape`, Linux)
 ```
 
-CGO не требуется (SQLite — `modernc.org/sqlite`), бинарь статический.
+CGO не требуется (SQLite — `modernc.org/sqlite`), исполняемый файл статический.
 
 Сборка для рабочей среды (как в CI):
 
@@ -236,7 +235,7 @@ log_level = "info"           # debug | info | warn | error
 
 # --- Web-доступ (демон) ---
 bind = "127.0.0.1:29201"     # loopback = из сети не виден (SSH-туннель);
-                             # LAN-адрес — осознанный выбор, потребует пароль
+                              # LAN-адрес требует настроенного пароля
 web_username = "admin"       # учётка ровно одна; пустая строка = auth выключен
                              # (разрешено ТОЛЬКО при bind на loopback)
 web_password_hash = "$2a$..." # bcrypt; генерируется `lentovodec passwd`
@@ -304,7 +303,7 @@ usermod -aG tape lentovodec
 |---|---|---|
 | **CLI** | `backup`, `restore`, `tape`, `jobs`, `catalog`, `passwd`, `daemon`; local-команды — прямой доступ к ленте, daemon-команды — HTTP | [`docs/func/ru/cli.md`](docs/func/ru/cli.md) |
 | **REST API** | `/api/*`: аутентификация, лента, задания, фоновые задачи, каталог | [`docs/func/ru/api.md`](docs/func/ru/api.md) |
-| **Web UI** | Экраны Login, Tape, Jobs, Catalog, Files; RU/EN; встроен в бинарь (`go:embed`) | [`docs/func/ru/api.md`](docs/func/ru/api.md) |
+| **Web UI** | Экраны Login, Tape, Jobs, Catalog, Files; RU/EN; встроен в исполняемый файл (`go:embed`) | [`docs/func/ru/api.md`](docs/func/ru/api.md) |
 
 Демон — «инструмент одной машины»: по умолчанию слушает `127.0.0.1:29201`
 и из сети не виден. Управление с другой машины — через SSH-туннель:
@@ -314,8 +313,8 @@ ssh -L 29201:127.0.0.1:29201 lentovodec@server
 # затем на ноутбуке: http://localhost:29201
 ```
 
-Прямой доступ из LAN — осознанный выбор оператора (меняется `bind`); при
-этом демон требует настроенный пароль и без него отказывается стартовать.
+Прямой доступ из LAN включается изменением `bind`; демон требует
+настроенный пароль и без него отказывается стартовать.
 
 ---
 
@@ -378,8 +377,8 @@ bmatcuk/doublestar/v4 · `log/slog` · `go:embed`.
 | `make web-dev` | Dev-сервер Vite с прокси `/api` на `:29201` |
 | `make clean` | Удалить `bin/`, `coverage/`, web-бандл |
 
-Fresh clone: сначала `make web-build` (бандл встраивается через
-`//go:embed`), затем `make build`.
+При новом клонировании репозитория: сначала `make web-build` (бандл
+встраивается через `//go:embed`), затем `make build`.
 
 Документация для разработчиков (порядок чтения перед правками):
 

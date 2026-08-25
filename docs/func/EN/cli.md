@@ -94,13 +94,13 @@ catalog (compensation); the index and the tape stay consistent.
 #### Verify-after-write (`--verify`)
 
 LTO ECC protects bits, not content: adjacent-track overwrites and servo
-data errors are real-world stories. `--verify` re-reads the freshly
-written sessions and checks every file's xxhash against the index (the
-hashes are already computed — the check is cheap in code, expensive in
-time: roughly ×2 the write duration). Only the sessions of the current
-run are checked, not the whole cartridge (full media diagnostics —
-`tape readtest`); with spanning, each part is verified on its own
-cartridge before the change.
+data errors are detected only by re-reading. `--verify` re-reads the
+freshly written sessions and checks every file's xxhash against the
+index (the hashes are computed during the write; the extra cost is the
+re-reading time: roughly ×2 the write duration). Only the sessions of
+the current run are checked, not the whole cartridge (full media
+diagnostics — `tape readtest`); with spanning, each part is verified on
+its own cartridge before the change.
 
 ```console
 $ lentovodec backup media --verify
@@ -118,7 +118,7 @@ back" — the operator decides (cartridge repair/replacement, a re-backup).
 
 If `capacity` is set in the config and the session does not fit on one
 cartridge, it is written as parts onto several cartridges. In terminal
-mode the tool itself asks when a cartridge closes:
+mode the tool asks for the next cartridge when one closes:
 
 ```console
 $ lentovodec backup media
