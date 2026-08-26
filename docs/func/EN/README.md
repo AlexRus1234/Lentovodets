@@ -27,7 +27,7 @@ instructions; details requiring separate treatment are documented here.
 | [features.md](features.md) | Features: jobs and backup modes, restore, catalog, tape, daemon, Web UI, and security. |
 | [cli.md](cli.md) | CLI reference: global flags, local/daemon commands, device selection, examples. |
 | [api.md](api.md) | Daemon REST API: authentication, endpoints, background tasks and progress. |
-| [os-setup.md](os-setup.md) | Linux deployment: the rootless model, the `tape` group, udev, the systemd unit, network access. |
+| [os-setup.md](os-setup.md) | Linux deployment: the rootless model, the `tape` group, udev, the systemd unit, network access, troubleshooting (foreign cartridges, the systemd sandbox, TapeAlert). |
 | [tape-format.md](tape-format.md) | The tape format from the operator's point of view: the label, sessions, filemarks, compatibility. |
 
 The Russian documentation is in [`docs/func/ru/`](../ru/README.md).

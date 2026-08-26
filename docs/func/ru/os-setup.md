@@ -143,8 +143,12 @@ webhook_url = "https://ntfy.sh/my-private-topic"
 webhook_timeout = "10s"
 ```
 
-Конфиг для демона — только чтение (запись заданий `jobs add` выполняйте
-от того же пользователя с правами записи в TOML). Секреты
+Конфиг для демона — только чтение; запись заданий (`jobs add`)
+выполняйте от того же пользователя с правами записи в TOML. Если
+задания добавляются через Web UI демона, запись нужна самому демону —
+задокументированный вариант: дописать `/etc/lentovodec` в
+`ReadWritePaths` юнита и отдать каталог конфига пользователю демона
+(симптомы и команды — раздел «Решение проблем», пп. 2-3). Секреты
 (`web_password_hash`, `api_key`) — только TOML с правами 0600, через env
 они не передаются.
 
@@ -195,6 +199,9 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/lentovodec
+# jobs add через Web UI требует записи в /etc/lentovodec — допишите
+# каталог в ReadWritePaths и дайте права пользователю демона:
+# раздел «Решение проблем», пп. 2-3
 PrivateTmp=true
 # PrivateDevices НЕ включать: нужен доступ к /dev/nst0
 ProtectKernelTunables=true
@@ -276,6 +283,119 @@ LENTOVODEC_TAPE_DEVICE=/dev/nst0 go test -tags tape ./test/hardware/...
 
 Быстрая проверка в эксплуатации — `lentovodec tape readtest`:
 диагностическое чтение всей кассеты со сверкой хешей без записи на ФС.
+
+---
+
+## Решение проблем (чтение/запись кассет и песочница systemd)
+
+Типовые проблемы первого развёртывания на реальном железе. Общая
+диагностика перед всем списком:
+
+```bash
+mt-st -f /dev/nst0 status    # состояние привода (на прочих дистрибутивах — mt)
+sudo dmesg | tail            # что сказал драйвер st (Arch: dmesg только root)
+sudo sg_logs -l /dev/nst0    # TapeAlert вручную (пакет sg3_utils; см. п. 5)
+journalctl -u lentovodec -e  # журнал демона
+```
+
+### 1. EIO на «чистой» кассете: чужая разметка
+
+Симптом: `tape format` / `tape info` падают ошибкой чтения блока —
+`linuxtape: чтение блока: read /dev/nst0: input/output error` (или
+`unexpected EOF`), хотя кассета визуально чистая. Причина: кассета
+ранее записана чужим софтом (LTFS, tar/dd без Лентоводца) — первый
+блок не читается как ярлык.
+
+Лечение — записать один filemark в начало ленты:
+
+```bash
+mt-st -f /dev/nst0 rewind && mt-st -f /dev/nst0 weof && mt-st -f /dev/nst0 offline
+```
+
+(`offline` = выброс кассеты; вставьте её обратно.) После этого чтение
+BOT даёт EOF — лента «пуста», `format` проходит. Что делает `weof`:
+пишет одну filemark в BOT; старые данные физически **не стираются**,
+но после перезаписи ярлыка/EOD Лентоводцем становятся недостижимыми.
+Подготовка нужна только кассетам с чужой разметкой — новым нет.
+Команда пишет на ленту → нужен доступ к устройству (группа `tape`);
+утилита на Arch — `mt-st` (пакет `mt-st`), на прочих дистрибутивах —
+`mt`.
+
+### 2. EROFS записи TOML (jobs add через Web UI)
+
+Симптом: `jobs add` через Web UI падает `read-only file system`.
+Причина: `ProtectSystem=strict` + `ReadWritePaths=/var/lib/lentovodec`
+— каталог `/etc/lentovodec` для демона read-only.
+
+Лечение: дописать `/etc/lentovodec` в `ReadWritePaths` юнита:
+
+```ini
+ReadWritePaths=/var/lib/lentovodec /etc/lentovodec
+```
+
+```bash
+systemctl daemon-reload && systemctl restart lentovodec
+```
+
+### 3. EACCES записи TOML: права каталога конфига
+
+Симптом: следом за п. 2 — `permission denied`: демон не создаёт
+временный `lentovodec.toml.tmp-*.toml` (атомарная запись конфига —
+сборка во временный файл рядом и rename). Причина: `/etc/lentovodec`
+принадлежит `root:root` с правами `0755`.
+
+Лечение:
+
+```bash
+chown lentovodec:lentovodec /etc/lentovodec
+chmod 0750 /etc/lentovodec
+```
+
+(вариант: `root:lentovodec 0770`).
+
+### 4. Restore в каталог вне песочницы
+
+Симптом: восстановление в `/tank/...` (вне `/var/lib/lentovodec`)
+падает ошибкой записи в каталог назначения; до сессии 17 Smart-restore
+при этом сообщал «все известные копии повреждены», маскируя причину.
+Ошибка та же песочница: `ProtectSystem=strict` закрывает всю ФС, кроме
+`ReadWritePaths`.
+
+Лечение: добавить каталог назначения в `ReadWritePaths` и дать
+пользователю демона доступ по Unix-правам:
+
+```bash
+setfacl -m u:lentovodec:rwx /tank/restore
+```
+
+Правило: **всё, куда пишет демон, — и в `ReadWritePaths`, и доступно
+пользователю по Unix-правам** — песочница systemd и права ФС работают
+независимо, одно без другого не помогает.
+
+### 5. tapealert unavailable: SG_IO LOG SENSE
+
+Симптом: `tape info` читает ярлык, но TapeAlert — «диагностика
+недоступна»; в журнале `SG_IO LOG SENSE: operation not permitted`.
+Это ожидаемо для rootless: с ядра ~5.19 проходные SCSI-команды
+фильтруются whitelist'ом ядра, LOG SENSE в него не входит (нужен
+`CAP_SYS_RAWIO`). На функциональность не влияет: чтение/запись ленты
+идут обычными системными вызовами. Алерты вручную:
+
+```bash
+sudo sg_logs -l /dev/nst0    # пакет sg3_utils
+```
+
+### Когда лечение не помогает
+
+- **Несовпадение поколений кассета/привод**: приводы LTO читают на два
+  поколения назад и пишут на одно (например, LTO-4 в LTO-5-приводе —
+  читается и пишется); кассета новее привода не читается вовсе.
+- **Грязные головки**: ошибки чтения/записи нарастают от кассеты к
+  кассете — чистящая кассета (TapeAlert «cleaning required» в
+  `sg_logs` или `tape info` при доступной диагностике).
+- **Изношенный носитель**: media wear / мягкие ошибки в LOG SENSE —
+  попробуйте другую кассету; полная проверка носителя — `tape
+  readtest`.
 
 ---
 

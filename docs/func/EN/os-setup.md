@@ -146,9 +146,14 @@ webhook_url = "https://ntfy.sh/my-private-topic"
 webhook_timeout = "10s"
 ```
 
-The daemon reads the config only (run `jobs add` as the same user with
-write access to the TOML). Secrets (`web_password_hash`, `api_key`) —
-TOML with 0600 permissions only; they cannot be passed through env.
+The daemon reads the config only; write jobs (`jobs add`) as the same
+user with write access to the TOML. When jobs are added through the
+daemon's Web UI, the daemon itself needs write access — the documented
+variant: add `/etc/lentovodec` to the unit's `ReadWritePaths` and give
+the config directory to the daemon user (symptoms and commands — the
+"Troubleshooting" section, items 2-3). Secrets
+(`web_password_hash`, `api_key`) — TOML with 0600 permissions only;
+they cannot be passed through env.
 
 ### Task-completion webhook
 
@@ -199,6 +204,9 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/lentovodec
+# jobs add via the Web UI requires write access to /etc/lentovodec —
+# add the directory to ReadWritePaths and grant it to the daemon user:
+# the "Troubleshooting" section, items 2-3
 PrivateTmp=true
 # Do NOT enable PrivateDevices: /dev/nst0 access is required
 ProtectKernelTunables=true
@@ -282,6 +290,124 @@ env `LENTOVODEC_TAPE_REFORMAT=1`.
 A quick production check — `lentovodec tape readtest`: a diagnostic
 read of the whole cartridge with hash verification, nothing written to
 the FS.
+
+---
+
+## Troubleshooting (cartridge read/write and the systemd sandbox)
+
+Typical first-deployment problems on real hardware. Common diagnostics
+for the whole list:
+
+```bash
+mt -f /dev/nst0 status       # drive state (on Arch Linux — mt-st)
+sudo dmesg | tail            # what the st driver said (Arch: dmesg is root-only)
+sudo sg_logs -l /dev/nst0    # TapeAlert manually (sg3_utils package; see item 5)
+journalctl -u lentovodec -e  # the daemon log
+```
+
+### 1. EIO on a "clean" cartridge: foreign markup
+
+Symptom: `tape format` / `tape info` fail with a block read error —
+`linuxtape: чтение блока: read /dev/nst0: input/output error`
+(`чтение блока` = "block read"; or `unexpected EOF`) although the
+cartridge looks blank. The cause: the
+cartridge was previously written by other software (LTFS, bare
+tar/dd) — the first block does not read as a label.
+
+The fix — write one filemark at the beginning of the tape:
+
+```bash
+mt -f /dev/nst0 rewind && mt -f /dev/nst0 weof && mt -f /dev/nst0 offline
+```
+
+(`offline` = eject; insert the cartridge back.) After that, reading at
+BOT yields EOF — the tape is "empty", `format` succeeds. What `weof`
+does: writes one filemark at BOT; the old data is **not physically
+erased**, but becomes unreachable once Lentovodets rewrites the
+label/EOD. The preparation is needed only for cartridges with foreign
+markup — not for new ones. The command writes to the tape → device
+access is required (the `tape` group); on Arch Linux the utility is
+called `mt-st` (package `mt-st`), on other distributions — `mt`.
+
+### 2. EROFS writing the TOML (jobs add via the Web UI)
+
+Symptom: `jobs add` through the Web UI fails with `read-only file
+system`. The cause: `ProtectSystem=strict` +
+`ReadWritePaths=/var/lib/lentovodec` — the `/etc/lentovodec` directory
+is read-only for the daemon.
+
+The fix: add `/etc/lentovodec` to the unit's `ReadWritePaths`:
+
+```ini
+ReadWritePaths=/var/lib/lentovodec /etc/lentovodec
+```
+
+```bash
+systemctl daemon-reload && systemctl restart lentovodec
+```
+
+### 3. EACCES writing the TOML: config directory permissions
+
+Symptom: right after item 2 — `permission denied`: the daemon cannot
+create the temporary `lentovodec.toml.tmp-*.toml` (the config is
+written atomically — assembled into a temp file next to it and then
+renamed). The cause: `/etc/lentovodec` belongs to `root:root` with
+`0755`.
+
+The fix:
+
+```bash
+chown lentovodec:lentovodec /etc/lentovodec
+chmod 0750 /etc/lentovodec
+```
+
+(an alternative: `root:lentovodec 0770`).
+
+### 4. Restore into a directory outside the sandbox
+
+Symptom: a restore into `/tank/...` (outside `/var/lib/lentovodec`)
+fails with a write error in the destination directory; before session
+17, Smart restore would report "all known copies damaged" at this
+point, masking the cause. The error is the same sandbox:
+`ProtectSystem=strict` closes the whole FS except `ReadWritePaths`.
+
+The fix: add the destination directory to `ReadWritePaths` and grant
+the daemon user access through Unix permissions:
+
+```bash
+setfacl -m u:lentovodec:rwx /tank/restore
+```
+
+The rule: **everything the daemon writes to — both in
+`ReadWritePaths` and accessible to the user through Unix
+permissions** — the systemd sandbox and FS permissions act
+independently; neither one alone helps.
+
+### 5. tapealert unavailable: SG_IO LOG SENSE
+
+Symptom: `tape info` reads the label, but TapeAlert reports
+"diagnostics unavailable"; the log shows `SG_IO LOG SENSE: operation
+not permitted`. This is expected for rootless: since kernel ~5.19
+passthrough SCSI commands are filtered by the kernel whitelist, and
+LOG SENSE is not in it (it requires `CAP_SYS_RAWIO`). Functionality is
+unaffected: tape reads/writes go through ordinary syscalls. Alerts
+manually:
+
+```bash
+sudo sg_logs -l /dev/nst0    # sg3_utils package
+```
+
+### When the fix does not help
+
+- **Cartridge/drive generation mismatch**: LTO drives read two
+  generations back and write one (for example, an LTO-4 cartridge in
+  an LTO-5 drive — readable and writable); a cartridge newer than the
+  drive is not read at all.
+- **Dirty heads**: read/write errors growing from cartridge to
+  cartridge — a cleaning cartridge (the TapeAlert "cleaning required"
+  flag in `sg_logs`, or `tape info` when diagnostics are available).
+- **Worn media**: media wear / soft errors in LOG SENSE — try another
+  cartridge; a full media check is `tape readtest`.
 
 ---
 

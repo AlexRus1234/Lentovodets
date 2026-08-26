@@ -28,7 +28,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | [features.md](features.md) | Возможности: задания и режимы бекапа, восстановление, каталог, лента, демон, Web UI и безопасность. |
 | [cli.md](cli.md) | Справочник CLI: глобальные флаги, команды local/daemon, выбор устройства, примеры. |
 | [api.md](api.md) | REST API демона: аутентификация, эндпоинты, фоновые задачи и прогресс. |
-| [os-setup.md](os-setup.md) | Развёртывание в Linux: rootless-модель, группа `tape`, udev, systemd-юнит, сетевой доступ. |
+| [os-setup.md](os-setup.md) | Развёртывание в Linux: rootless-модель, группа `tape`, udev, systemd-юнит, сетевой доступ, решение проблем (чужая кассета, песочница systemd, TapeAlert). |
 | [tape-format.md](tape-format.md) | Формат ленты с точки зрения оператора: ярлык, сессии, filemark'и, совместимость. |
 
 Английская документация — в каталоге [`docs/func/EN/`](../EN/README.md).

@@ -222,6 +222,27 @@ lentovodec passwd     # bcrypt hash → web_password_hash in TOML
 lentovodec daemon
 ```
 
+### Preparing a cartridge
+
+A new (blank) cartridge needs nothing — `tape format` writes the label
+onto an empty tape. A cartridge previously written by other software
+(LTFS, bare tar/dd) does: `tape format` / `tape info` fail with a block
+read error (`input/output error`). Write one filemark at the beginning
+of the tape:
+
+```bash
+mt -f /dev/nst0 rewind && mt -f /dev/nst0 weof && mt -f /dev/nst0 offline
+```
+
+`weof` marks the tape as empty: the old data is **not physically
+erased**, but it becomes unreachable once Lentovodets rewrites the
+label. The command writes to the tape — device access is required
+(the `tape` group); on Arch Linux the utility is called `mt-st`
+(package `mt-st`), on other distributions — `mt`. Diagnostics and
+other typical real-hardware problems — in
+[`docs/func/EN/os-setup.md`](docs/func/EN/os-setup.md), the
+"Troubleshooting" section.
+
 ---
 
 ## Configuration
