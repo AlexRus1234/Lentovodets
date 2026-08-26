@@ -19,6 +19,7 @@ package restore_test
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"testing/fstest"
 
@@ -48,6 +49,7 @@ type recTape struct {
 	fsfErr    error
 	rewindErr error
 	readErr   error
+	onFSF     func() // вызывается после успешного MTFSF
 }
 
 func (t *recTape) ForwardFilemarks(ctx context.Context, n int) error {
@@ -55,7 +57,13 @@ func (t *recTape) ForwardFilemarks(ctx context.Context, n int) error {
 	if t.fsfErr != nil {
 		return t.fsfErr
 	}
-	return t.FakeTape.ForwardFilemarks(ctx, n)
+	if err := t.FakeTape.ForwardFilemarks(ctx, n); err != nil {
+		return err
+	}
+	if t.onFSF != nil {
+		t.onFSF()
+	}
+	return nil
 }
 
 func (t *recTape) Rewind(ctx context.Context) error {
@@ -415,16 +423,84 @@ func TestRestore_SmartFallsBackToOlderCopy(t *testing.T) {
 	}
 }
 
+// TestRestore_SmartDestWriteErrorAborts — ошибка записи в dest (EROFS
+// под ProtectSystem=strict, инцидент 2026-08-25) — не порча копии:
+// немедленный abort исходной ошибкой, без перебора копий и без
+// NoHealthyCopyError.
+func TestRestore_SmartDestWriteErrorAborts(t *testing.T) {
+	h := newHarness(t)
+	h.codec.WriteToDest = true
+	erofs := errors.New("osfs: создание \"/tank/a\": open /tank/a: read-only file system")
+	uc := restore.New(h.tape, h.codec, h.cat, &failCreateFS{MapFS: h.dest, err: erofs}, h.prog, testutil.NoopLogger(), nil)
+	h.addSession(t, 1, []domain.FileMeta{meta("/tank/a")})
+	h.addSession(t, 2, []domain.FileMeta{meta("/tank/a")})
+
+	_, err := uc.Smart(context.Background(), []string{"/tank/a"})
+	if !errors.Is(err, erofs) {
+		t.Fatalf("Smart: %v; want ошибка записи в dest", err)
+	}
+	var nohealthy *domain.NoHealthyCopyError
+	if errors.As(err, &nohealthy) {
+		t.Fatal("ошибка dest замаскирована под NoHealthyCopyError")
+	}
+	if h.codec.ReadCalls != 1 {
+		t.Errorf("ReadCalls = %d; want 1 (без fallback на старую копию)", h.codec.ReadCalls)
+	}
+	if len(h.tape.fsf) != 1 {
+		t.Errorf("ForwardFilemarks calls = %d; want 1 (лента читалась один раз)", len(h.tape.fsf))
+	}
+	if h.prog.fails != 1 || h.prog.done != 0 {
+		t.Errorf("прогресс: fails=%d done=%d; want 1/0", h.prog.fails, h.prog.done)
+	}
+}
+
+// TestRestore_SmartContextCanceledAborts — отмена ctx при переборе
+// копий abort-ит восстановление ошибкой ctx, а не NoHealthyCopyError.
+func TestRestore_SmartContextCanceledAborts(t *testing.T) {
+	h := newHarness(t)
+	h.addSession(t, 1, []domain.FileMeta{meta("/a")})
+	h.addSession(t, 2, []domain.FileMeta{meta("/a")})
+	// копия из сессии 2 повреждена → fallback; после позиционирования
+	// к копии сессии 1 (второй MTFSF) ctx отменяется — ReadSession
+	// возвращает отмену
+	h.codec.ErrReadOnce = errors.Join(&domain.SessionDamageError{},
+		errors.New("tapeformat: файл /a повреждён: хеш"))
+	h.codec.ErrReadOn = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.tape.onFSF = func() {
+		if len(h.tape.fsf) == 2 {
+			cancel()
+		}
+	}
+
+	_, err := h.uc.Smart(ctx, []string{"/a"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Smart: %v; want context.Canceled", err)
+	}
+	var nohealthy *domain.NoHealthyCopyError
+	if errors.As(err, &nohealthy) {
+		t.Fatal("отмена ctx замаскирована под NoHealthyCopyError")
+	}
+	if h.prog.fails != 1 || h.prog.done != 0 {
+		t.Errorf("прогресс: fails=%d done=%d; want 1/0", h.prog.fails, h.prog.done)
+	}
+}
+
 func TestRestore_SmartNoHealthyCopy(t *testing.T) {
 	h := newHarness(t)
-	h.addSession(t, 1, []domain.FileMeta{meta("/gone")})
-	h.codec.Queue = nil
-	h.codec.ReadFiles = nil
-	h.codec.ErrRead = errors.New("tapeformat: чтение индекса: i/o error")
+	h.addSession(t, 1, []domain.FileMeta{meta("/etc/hosts")})
+	h.addSession(t, 2, []domain.FileMeta{meta("/etc/hosts")})
+	// обе копии повреждены: fallback исчерпан — NoHealthyCopy
+	h.codec.ErrRead = errors.Join(&domain.SessionDamageError{},
+		errors.New("tapeformat: файл /etc/hosts повреждён: хеш"))
 
 	_, err := h.uc.Smart(context.Background(), []string{"/etc/hosts"})
 	if !errors.Is(err, &domain.NoHealthyCopyError{}) {
 		t.Fatalf("Smart: %v; want NoHealthyCopyError", err)
+	}
+	if h.codec.ReadCalls != 2 {
+		t.Errorf("ReadCalls = %d; want 2 (обе копии попробованы)", h.codec.ReadCalls)
 	}
 	if h.prog.fails != 1 {
 		t.Errorf("fails = %d; want 1", h.prog.fails)
@@ -632,6 +708,17 @@ func TestRestore_TombstoneRemoveMissingFile(t *testing.T) {
 	if _, err := h.uc.Full(context.Background()); err != nil {
 		t.Fatalf("Full: %v", err)
 	}
+}
+
+// failCreateFS — dest, чей Create всегда падает (EROFS: запись в
+// dest ≠ порча копии).
+type failCreateFS struct {
+	*testutil.MapFS
+	err error
+}
+
+func (m *failCreateFS) Create(p string) (io.WriteCloser, error) {
+	return nil, m.err
 }
 
 // failCat — каталог с инъекцией сбоев.

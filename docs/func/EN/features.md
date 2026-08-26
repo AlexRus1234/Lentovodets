@@ -117,7 +117,7 @@ Three modes (see [cli.md](cli.md) for the CLI syntax):
 |---|---|---|
 | **Full** | Disaster recovery of the whole cartridge | Sessions are read sequentially from the beginning; for each one — the index, then the tar with xxhash checks. Damaged sessions are skipped, moving on to the next. |
 | **Selective** | Selected files from a specific session | Positioning to the session by number, selecting files by paths and subtrees. Available in the Web UI (session file browser). |
-| **Smart** | Restore by path without knowing the session | The catalog returns all copies of the path from newest to oldest; on a hash mismatch — fallback to the next copy. No healthy copy left → `NoHealthyCopyError`. |
+| **Smart** | Restore by path without knowing the session | The catalog returns all copies of the path from newest to oldest; on a damaged copy (hash mismatch) — fallback to the next one. No healthy copy left → `NoHealthyCopyError`. A write error to the destination (for example, a read-only file system) stops the restore immediately with the original error instead of "copies are damaged". |
 
 Common properties:
 

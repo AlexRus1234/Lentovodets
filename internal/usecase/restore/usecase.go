@@ -205,9 +205,14 @@ func (uc *UseCase) Selective(ctx context.Context, sessionID int64, paths []strin
 
 // Smart восстанавливает пути по самым свежим читаемым копиям с текущей
 // ленты. Порядок копий — от самых новых (порт Catalog упорядочивает по
-// убыванию времени). Ошибки чтения конкретной копии (повреждение,
-// несовпавший хеш) — переход к следующей копии; ни одна не читается —
-// *domain.NoHealthyCopyError.
+// убыванию времени). Повреждение конкретной копии
+// (*domain.SessionDamageError: порча данных, несовпавший хеш) —
+// переход к следующей копии; ни одна не читается —
+// *domain.NoHealthyCopyError. Прочие ошибки чтения (запись в dest,
+// транспортный сбой, отмена ctx) перебором копий не лечатся —
+// немедленный возврат исходной ошибки: иначе сбой записи в dest
+// маскировался под «все копии повреждены» (EROFS под
+// ProtectSystem=strict, инцидент 2026-08-25).
 func (uc *UseCase) Smart(ctx context.Context, paths []string) (Stats, error) {
 	if len(paths) == 0 {
 		return Stats{}, errors.New("restore smart: список путей пуст")
@@ -240,6 +245,15 @@ func (uc *UseCase) Smart(ctx context.Context, paths []string) (Stats, error) {
 		want := setOf(remaining)
 		files, readErr := uc.codec.ReadSession(ctx, uc.tape, uc.fs, wantPredicate(want), uc.prog)
 		if readErr != nil {
+			if !isSessionDamage(readErr) {
+				// Не порча носителя (запись в dest, транспорт, отмена
+				// ctx): перебор копий бессмыслен и маскирует причину.
+				err := fmt.Errorf("restore smart: чтение сессии %d: %w", group.id, readErr)
+				if uc.prog != nil {
+					uc.prog.Fail(err)
+				}
+				return st, err
+			}
 			uc.log.Warn("smart: копия не читается",
 				slog.Int64("session_id", group.id),
 				slog.Int("session_num", int(group.num)),
