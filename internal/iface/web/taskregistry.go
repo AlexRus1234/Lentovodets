@@ -70,7 +70,8 @@ type Task struct {
 	finishedAt  time.Time
 	logs        []string
 	lastLogAt   time.Time
-	lastSample  time.Time
+	baseSample  time.Time
+	baseBytes   int64
 	lastBytes   int64
 	speedBps    float64
 	job         string
@@ -145,23 +146,26 @@ func (t *Task) Snapshot() taskProgressJSON {
 }
 
 // update применяет очередной ProgressUpdate; строки лога пишутся не
-// чаще двух в секунду.
+// чаще двух в секунду. Скорость — среднее по фазе от зафиксированной
+// базы (processed0, t0): EWMA по мгновенным сэмплам на пиле
+// «чанк из буфера ↔ ленточный I/O» сходился к геометрическому
+// среднему всплеска и паузы и завышал скорость втрое (сессия 19).
 func (t *Task) update(u port.ProgressUpdate, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.state != taskRunning {
 		return
 	}
-	dt := now.Sub(t.lastSample)
-	if dt > 0 && u.ProcessedBytes >= t.lastBytes {
-		inst := float64(u.ProcessedBytes-t.lastBytes) / dt.Seconds()
-		if t.speedBps == 0 {
-			t.speedBps = inst
-		} else {
-			t.speedBps = 0.5*t.speedBps + 0.5*inst // сглаживание
-		}
+	// База сбрасывается: на первом апдейте, при смене фазы и при
+	// уменьшении processed (декодер считает байты локально для каждой
+	// сессии — Full-restore читает сессии подряд).
+	if t.baseSample.IsZero() || u.Phase != t.phase || u.ProcessedBytes < t.lastBytes {
+		t.baseSample, t.baseBytes = now, u.ProcessedBytes
+		t.speedBps = 0
+	} else if dt := now.Sub(t.baseSample); dt > 0 {
+		t.speedBps = float64(u.ProcessedBytes-t.baseBytes) / dt.Seconds()
 	}
-	t.lastSample, t.lastBytes = now, u.ProcessedBytes
+	t.lastBytes = u.ProcessedBytes
 	t.phase, t.currentFile = u.Phase, u.CurrentFile
 	t.processed, t.total = u.ProcessedBytes, u.TotalBytes
 	if u.Message != "" {
