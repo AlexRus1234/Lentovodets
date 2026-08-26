@@ -35,6 +35,12 @@ test:
 test-race:
 	"$(GO)" test -race ./...
 
+# test-e2e — Playwright E2E Web UI (tests/e2e): global-setup сам собирает
+# web-бандл и бинарь, поднимает демона на filetape и сеет данные.
+.PHONY: test-e2e
+test-e2e:
+	cd tests/e2e && "$(NPM)" install && "$(NPM)" run test:e2e
+
 .PHONY: cover
 cover:
 	"$(GO)" test -coverprofile="$(COVER_OUT)" ./...

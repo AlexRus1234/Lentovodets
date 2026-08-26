@@ -41,6 +41,26 @@ func TestNormalizePath(t *testing.T) {
 	}
 }
 
+// TestNormalizePath_AbsoluteAndRelativeDistinct — регрессия сессии 18:
+// Web UI строит дерево, срезая ведущий '/' каталоговых путей, но в API
+// (restore/start, file-copies) путь должен уходить ровно тот, что в
+// каталоге. Относительное «tank/…» и абсолютное «/tank/…» обязаны
+// оставаться разными строками: копии ищутся по точному пути, потеря
+// слэша превращается в «все копии не читаются».
+func TestNormalizePath_AbsoluteAndRelativeDistinct(t *testing.T) {
+	rel := domain.NormalizePath("tank/data/medTEST/TT/video.mkv")
+	abs := domain.NormalizePath("/tank/data/medTEST/TT/video.mkv")
+	if rel == abs {
+		t.Fatalf("NormalizePath склеила относительный и абсолютный путь: %q == %q", rel, abs)
+	}
+	if want := "tank/data/medTEST/TT/video.mkv"; rel != want {
+		t.Errorf("NormalizePath(относительный) = %q, want %q", rel, want)
+	}
+	if want := "/tank/data/medTEST/TT/video.mkv"; abs != want {
+		t.Errorf("NormalizePath(абсолютный) = %q, want %q", abs, want)
+	}
+}
+
 func TestNormalizePathWindowsSeparators(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("разделители '\\' специфичны для windows")

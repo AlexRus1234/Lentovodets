@@ -61,9 +61,15 @@ const expandedPath = ref('')
 const copies = ref<FileCopy[]>([])
 const copiesLoading = ref(false)
 
-// norm — единый вид пути для навигации: слэши, без хвостового '/'.
+// norm — единый вид пути для навигации: слэши, без ведущего и
+// хвостового '/'. Каталог хранит абсолютные пути («/tank/…»): без
+// среза ведущего слэша первый компонент пути пуст и дерево схлопывается
+// в один безымянный корень. Нормализованный путь — только для
+// отображения; в API (restore, file-copies) уходит исходный f.path —
+// срезанное «tank/…» не совпадает с путём в каталоге.
 function norm(p: string): string {
   let s = p.replaceAll('\\', '/')
+  if (s.length > 1 && s.startsWith('/')) s = s.replace(/^\/+/, '')
   if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
   return s
 }
@@ -97,15 +103,17 @@ async function loadFiles(): Promise<void> {
   }
 }
 
-async function toggleCopies(path: string): Promise<void> {
-  if (expandedPath.value === path) {
+// Копии запрашиваются по исходному пути каталога (row.orig):
+// нормализованный «tank/…» не совпал бы с «/tank/…» в catalog.
+async function toggleCopies(row: Row): Promise<void> {
+  if (expandedPath.value === row.path) {
     expandedPath.value = ''
     return
   }
-  expandedPath.value = path
+  expandedPath.value = row.path
   copiesLoading.value = true
   try {
-    copies.value = (await getFileCopies(path)).copies
+    copies.value = (await getFileCopies(row.orig)).copies
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
     copies.value = []
@@ -149,7 +157,8 @@ onMounted(() => {
 // --- Навигация по дереву ---
 
 interface Row {
-  path: string
+  path: string // нормализованный путь (для навигации и чекбоксов)
+  orig: string // путь как в каталоге (для запросов API); '' у виртуальных каталогов
   name: string
   isDir: boolean
   size: number
@@ -165,7 +174,7 @@ const rows = computed<Row[]>(() => {
   const ensureDir = (path: string, name: string): Row => {
     let r = dirs.get(name)
     if (!r) {
-      r = { path, name, isDir: true, size: 0, modTime: 0, state: 'A' }
+      r = { path, name, orig: '', isDir: true, size: 0, modTime: 0, state: 'A' }
       dirs.set(name, r)
     }
     return r
@@ -189,6 +198,7 @@ const rows = computed<Row[]>(() => {
     fileRows.push({
       path: p,
       name: rest,
+      orig: f.path,
       isDir: false,
       size: f.size,
       modTime: f.mod_time,
@@ -289,6 +299,9 @@ const selectedCount = computed(() => {
 })
 
 // expandSelection — выделение в плоский список восстанавливаемых путей.
+// В API уходят ИСХОДНЫЕ пути каталога (f.path): нормализованные «tank/…»
+// без ведущего слэша не совпадут с записями каталога, и smart-restore
+// решит, что копий нет (грабля сессии 18; образец — restoreCopy).
 function expandSelection(): string[] {
   const out: string[] = []
   const seen = new Set<string>()
@@ -301,7 +314,7 @@ function expandSelection(): string[] {
         const fp = pathOf(f)
         if (!f.is_dir && f.state !== 'D' && (fp + '/').startsWith(p + '/') && !seen.has(fp)) {
           seen.add(fp)
-          out.push(fp)
+          out.push(f.path)
         }
       }
       continue
@@ -311,12 +324,12 @@ function expandSelection(): string[] {
         const fp = pathOf(f)
         if (!f.is_dir && f.state !== 'D' && !seen.has(fp)) {
           seen.add(fp)
-          out.push(fp)
+          out.push(f.path)
         }
       }
     } else if (row.state !== 'D' && !seen.has(p)) {
       seen.add(p)
-      out.push(p)
+      out.push(row.path)
     }
   }
   return out
@@ -425,7 +438,7 @@ const sessionLabel = (s: Session): string =>
             <td>
               <a v-if="row.isDir" class="dir mono" @click="enter(row.path)">{{ row.name }}/</a>
               <span v-else class="mono" :title="row.path">{{ row.name }}</span>
-              <button v-if="!row.isDir" class="link-button" @click="toggleCopies(row.path)">
+              <button v-if="!row.isDir" class="link-button" @click="toggleCopies(row)">
                 {{ t('files.copies', { n: expandedPath === row.path && !copiesLoading ? copies.length : '…' }) }}
               </button>
             </td>

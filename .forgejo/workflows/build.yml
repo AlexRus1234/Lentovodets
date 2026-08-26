@@ -31,6 +31,11 @@ on:
         required: true
         default: true
         type: boolean
+      run_e2e_tests:
+        description: "Run Playwright E2E (tests/e2e)? Installs chromium; opt-in."
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   build-test:
@@ -175,6 +180,24 @@ jobs:
           go tool cover -func coverage.out | tail -n 1
           echo "===== Per-package ====="
           go tool cover -func coverage.out | grep -E '^lentovodec/' | sort
+
+      - name: Playwright E2E (opt-in)
+        # tests/e2e поднимает собственного демона на filetape-ленте и сам
+        # сеет данные (format → job → full backup). Бинарь и web-бандл уже
+        # собраны предыдущими шагами — global-setup пропускает сборку
+        # (E2E_SKIP_BUILD + E2E_LENTOVODEC_BIN). Chromium-зависимости
+        # ставим сами: `playwright install --with-deps` умеет только apt.
+        if: success() && github.event.inputs.run_e2e_tests == 'true'
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            nss nspr atk at-spi2-atk cups-libs libdrm libxkbcommon \
+            libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
+            mesa-libgbm pango alsa-lib libxshmfence
+          BIN="$PWD/lentovodec-ci"
+          cd tests/e2e
+          npm ci
+          npx playwright install chromium
+          E2E_SKIP_BUILD=1 E2E_LENTOVODEC_BIN="$BIN" npx playwright test
 
       - name: Show binary info
         run: |
