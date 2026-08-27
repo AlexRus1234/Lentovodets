@@ -138,9 +138,12 @@ jobs:
         run: cd web && npm ci && npm run build
 
       - name: Build binary
+        # -tags tape: релизный бинарь обязан уметь реальный стример
+        # (/dev/nst*); сборка с тегом на linux/amd64 всё равно использует
+        # filetape для путей-файлов (dev/CI/e2e не затронуты).
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-          go build -trimpath \
+          go build -tags tape -trimpath \
             -ldflags="-s -w -X lentovodec/cmd/lentovodec.Version=${APP_VERSION}" \
             -o lentovodec-ci ./cmd/lentovodec
 
