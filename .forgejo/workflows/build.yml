@@ -41,7 +41,8 @@ jobs:
   build-test:
     runs-on: docker
     container:
-      image: fedora:44
+      # Образ — через Nora-зеркало docker.io/library (как в bin_build)
+      image: nora.panelka.yadr01.internal/library/fedora:44
     env:
       # All external dependencies via Nora where possible
       GOPROXY: "https://nora.panelka.yadr01.internal/go,direct"
@@ -63,16 +64,34 @@ jobs:
           update-ca-trust
           git config --global http.sslCAInfo /etc/pki/ca-trust/source/anchors/step-ca.crt
 
-      - name: Configure Nora RPM repo (custom packages if needed)
+      - name: Configure Khrazhevnik RPM repos (dogfood)
+        # DNF дальше ходит ТОЛЬКО через Хражевник: дефолтные fedora*.repo
+        # (metalink на внешние зеркала) удаляются — база образа запинена на
+        # fedora:44, khrz-ремоуты тоже F44 (паттерн build-test Хражевника).
+        # Bootstrap-шаг выше (git+curl) неизбежно идёт мимо кеша: без curl
+        # не достать roots.pem step-ca для доверия к инстансу.
+        # gpgcheck=0 — passthrough чужих подписей байтово (инвариант кеша).
+        # zchunk=False: dnf5 падает на .zck-метаданных через прокси
+        # («primary data not present», проверено на F44/dnf5) — качаем .gz.
         run: |
-          cat > /etc/yum.repos.d/nora.repo << 'EOF'
-          [nora-runner]
-          name=Nora Runner Dependencies
-          baseurl=https://nora.panelka.yadr01.internal/rpm/runner/
+          rm -f /etc/yum.repos.d/fedora*.repo
+          cat > /etc/yum.repos.d/khrz.repo << 'EOF'
+          [khrz-fedora]
+          name=Khrazhevnik Fedora 44 (release)
+          baseurl=https://khrazhevnik.panelka.yadr01.internal/rpm/fedora/
           gpgcheck=0
           enabled=1
-          priority=1
           sslverify=1
+          zchunk=False
+          EOF
+          cat > /etc/yum.repos.d/khrz-updates.repo << 'EOF'
+          [khrz-fedora-updates]
+          name=Khrazhevnik Fedora 44 (updates)
+          baseurl=https://khrazhevnik.panelka.yadr01.internal/rpm/fedora-updates/
+          gpgcheck=0
+          enabled=1
+          sslverify=1
+          zchunk=False
           EOF
 
       - name: Install remaining system dependencies
@@ -188,18 +207,26 @@ jobs:
         # tests/e2e поднимает собственного демона на filetape-ленте и сам
         # сеет данные (format → job → full backup). Бинарь и web-бандл уже
         # собраны предыдущими шагами — global-setup пропускает сборку
-        # (E2E_SKIP_BUILD + E2E_LENTOVODEC_BIN). Chromium-зависимости
-        # ставим сами: `playwright install --with-deps` умеет только apt.
+        # (E2E_SKIP_BUILD + E2E_LENTOVODEC_BIN).
+        #
+        # Герметичность (паттерн Хражевника): браузер — системный
+        # chromium-headless из fedora-репо через khrz (dnf), а НЕ
+        # `npx playwright install` (тот качает билд с cdn.playwright.dev
+        # мимо кеша — дыра). Дерево shared-lib-депсов ставит сам dnf.
+        # Бинарь пакета — /usr/lib64/chromium-browser/headless_shell
+        # (файллист F44); путь передаётся Playwright'у через
+        # E2E_CHROMIUM_EXECUTABLE (launchOptions в playwright.config.ts).
         if: success() && github.event.inputs.run_e2e_tests == 'true'
         run: |
-          dnf install -y --setopt=install_weak_deps=False \
-            nss nspr atk at-spi2-atk cups-libs libdrm libxkbcommon \
-            libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
-            mesa-libgbm pango alsa-lib libxshmfence
+          dnf install -y --setopt=install_weak_deps=False chromium-headless
+          E2E_CHROMIUM_EXECUTABLE="$(rpm -ql chromium-headless | grep -E 'headless_shell$' | head -n1 || true)"
+          test -n "$E2E_CHROMIUM_EXECUTABLE" && test -x "$E2E_CHROMIUM_EXECUTABLE" \
+            || { echo "::error::headless_shell not found in chromium-headless"; exit 1; }
+          echo "Using browser: $E2E_CHROMIUM_EXECUTABLE"
+          export E2E_CHROMIUM_EXECUTABLE
           BIN="$PWD/lentovodec-ci"
           cd tests/e2e
           npm ci
-          npx playwright install chromium
           E2E_SKIP_BUILD=1 E2E_LENTOVODEC_BIN="$BIN" npx playwright test
 
       - name: Show binary info

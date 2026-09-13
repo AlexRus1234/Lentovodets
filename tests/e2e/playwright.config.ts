@@ -28,6 +28,11 @@ import { defineConfig, devices } from '@playwright/test'
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://127.0.0.1:29290'
 
+// Системный chromium (CI: dnf chromium-headless через Хражевник) вместо
+// билда с cdn.playwright.dev — env ставит workflow; локально без env
+// Playwright использует свой бинарник как раньше.
+const CHROMIUM_EXECUTABLE = process.env.E2E_CHROMIUM_EXECUTABLE
+
 export default defineConfig({
   testDir: './specs',
   fullyParallel: false,
@@ -38,6 +43,7 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
+    ...(CHROMIUM_EXECUTABLE ? { launchOptions: { executablePath: CHROMIUM_EXECUTABLE } } : {}),
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })
