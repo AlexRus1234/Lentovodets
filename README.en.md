@@ -417,7 +417,10 @@ Developer documentation (reading order before making changes):
 2. [docs/SPECIFICATION.md](docs/SPECIFICATION.md) — requirements, CLI, REST API, DB schema.
 3. [docs/FORMAT.md](docs/FORMAT.md) — the tape format byte canon.
 4. [docs/TESTING.md](docs/TESTING.md) — testing strategy.
-5. [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and stage history.
+5. [docs/ROADMAP.md](docs/ROADMAP.md) — the guide: current status and
+   directions; [docs/HISTORY.md](docs/HISTORY.md) — the completed stage history.
+6. [CHANGELOG.md](CHANGELOG.md) — the release changelog
+   ([CHANGELOG.EN.md](CHANGELOG.EN.md) — the translation).
 
 ---
 

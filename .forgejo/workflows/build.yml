@@ -192,7 +192,7 @@ jobs:
       - name: Coverage report
         # Separate step (no -race) so instrumentation overhead & race detector
         # don't skew numbers. Informational only — thresholds live in
-        # docs/TESTING.md §4 and are tracked per-stage in ROADMAP notes
+        # docs/TESTING.md §4 and are tracked per-stage in HISTORY notes
         # (current: total 87.5%, iface/cli+web pull it down by design).
         env:
           CGO_ENABLED: "1"

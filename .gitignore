@@ -1,13 +1,23 @@
-# Legacy (старый nil-backup) — только локальный референс, в git не попадает.
-# См. docs/LEGACY_REFERENCE.md.
+# Планировочные документы агента — вне репозитория
+/логи/
+
+# Конфигурация agentic-инструментов — вне репозитория
+AGENTS.md
+opencode.json
+.claude/
+CLAUDE.md
+.cursor/
+.cursorrules
+.github/copilot-instructions.md
+
+# Legacy (старый nil-backup) — локальный референс, в git не попадает
 /legacy/
 
-# Инструкции для agentic-инструментов (AGENTS.md и пр.) — локальные, в git не попадают.
-AGENTS.md
-
-# Бинари сборки
+# Go: бинари сборки и тестов
 /lentovodec
 /lentovodec.exe
+*.exe~
+*.test
 /bin/
 /dist/
 
@@ -17,10 +27,13 @@ AGENTS.md
 *.db-wal
 *.log
 
-# Локальные конфиги (пользователь может переопределять)
+# Локальные конфиги и секреты (пользователь может переопределять)
 /lentovodec.toml
+.env
+.env.*
 
-# Web-бандл, генерируемый Vite (_embed'ится в бинарь на этапе сборки)
+# Web-бандл, генерируемый Vite (_embed'ится в бинарь на этапе сборки);
+# заглушку для сборки без фронтенда восстанавливает `make clean`
 /internal/iface/web/assets/
 
 # Web UI: зависимости npm (ставятся через make web-build)
@@ -39,6 +52,3 @@ Thumbs.db
 
 # Файлы ленточных "тренажёров" из filetape-тестов
 *.tape
-
-# Локальные заметки и планы (не для git)
-/логи/

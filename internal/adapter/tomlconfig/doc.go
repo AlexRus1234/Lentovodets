@@ -21,6 +21,7 @@
 //	defaults (в коде) < lentovodec.toml < env LENTOVODEC_* < флаги CLI.
 //
 // Конфиг всегда TOML, даже если флаг --config указывает на .yaml/.json
-// (фикс легаси-бага, docs/LEGACY_REFERENCE.md §2.2). Здесь же — AddJob /
+// (фикс легаси-бага nil-backup; легаси-референс — локальный /legacy/,
+// в git не попадает). Здесь же — AddJob /
 // RemoveJob с записью обратно в TOML.
 package tomlconfig

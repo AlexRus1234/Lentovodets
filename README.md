@@ -405,7 +405,10 @@ bmatcuk/doublestar/v4 · `log/slog` · `go:embed`.
 2. [docs/SPECIFICATION.md](docs/SPECIFICATION.md) — требования, CLI, REST API, схема БД.
 3. [docs/FORMAT.md](docs/FORMAT.md) — канон двоичного формата ленты.
 4. [docs/TESTING.md](docs/TESTING.md) — стратегия тестирования.
-5. [docs/ROADMAP.md](docs/ROADMAP.md) — план и история этапов.
+5. [docs/ROADMAP.md](docs/ROADMAP.md) — путеводитель: текущий статус и
+   направления; [docs/HISTORY.md](docs/HISTORY.md) — история завершённых этапов.
+6. [CHANGELOG.md](CHANGELOG.md) — история изменений по релизам
+   ([CHANGELOG.EN.md](CHANGELOG.EN.md) — перевод).
 
 ---
 

@@ -18,7 +18,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # web
 
-Исходники Vue 3 + Vite для Web UI (Этап 8 ROADMAP).
+Исходники Vue 3 + Vite для Web UI (Этап 8, `docs/HISTORY.md`).
 
 ## Структура
 
