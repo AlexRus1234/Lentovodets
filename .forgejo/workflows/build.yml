@@ -42,7 +42,7 @@ jobs:
     runs-on: docker
     container:
       # Образ — через Nora-зеркало docker.io/library (как в bin_build)
-      image: nora.panelka.yadr01.internal/library/fedora:46
+      image: nora.panelka.yadr01.internal/library/fedora:44
     env:
       # All external dependencies via Nora where possible
       GOPROXY: "https://nora.panelka.yadr01.internal/go,direct"
@@ -67,7 +67,9 @@ jobs:
       - name: Configure Khrazhevnik RPM repos (dogfood)
         # DNF дальше ходит ТОЛЬКО через Хражевник: дефолтные fedora*.repo
         # (metalink на внешние зеркала) удаляются — база образа запинена на
-        # fedora:46, khrz-ремоуты тоже F46 (паттерн build-test Хражевника).
+        # fedora:44, khrz-ремоуты тоже F44 (паттерн build-test Хражевника).
+        # ВНИМАНИЕ: 45/46 — только после их GA (releases/45|46 на апстриме;
+        # бранчед-образы 45 в registry появляются раньше RPM-дерева).
         # Bootstrap-шаг выше (git+curl) неизбежно идёт мимо кеша: без curl
         # не достать roots.pem step-ca для доверия к инстансу.
         # gpgcheck=0 — passthrough чужих подписей байтово (инвариант кеша).
@@ -77,7 +79,7 @@ jobs:
           rm -f /etc/yum.repos.d/fedora*.repo
           cat > /etc/yum.repos.d/khrz.repo << 'EOF'
           [khrz-fedora]
-          name=Khrazhevnik Fedora 46 (release)
+          name=Khrazhevnik Fedora 44 (release)
           baseurl=https://khrazhevnik.panelka.yadr01.internal/rpm/fedora/
           gpgcheck=0
           enabled=1
@@ -86,7 +88,7 @@ jobs:
           EOF
           cat > /etc/yum.repos.d/khrz-updates.repo << 'EOF'
           [khrz-fedora-updates]
-          name=Khrazhevnik Fedora 46 (updates)
+          name=Khrazhevnik Fedora 44 (updates)
           baseurl=https://khrazhevnik.panelka.yadr01.internal/rpm/fedora-updates/
           gpgcheck=0
           enabled=1
@@ -104,7 +106,7 @@ jobs:
 
       - name: Install Go toolchain
         run: |
-          # Fedora 46 ships an older Go; lentovodets needs 1.26.1+ (go.mod).
+          # Fedora 44 ships an older Go; lentovodets needs 1.26.1+ (go.mod).
           # Tarball from go.dev. -f: fail on HTTP errors (don't pipe HTML
           # error page into tar). Download first, then extract, so we get a
           # clear error if URL is wrong.
@@ -214,7 +216,7 @@ jobs:
         # `npx playwright install` (тот качает билд с cdn.playwright.dev
         # мимо кеша — дыра). Дерево shared-lib-депсов ставит сам dnf.
         # Бинарь пакета — /usr/lib64/chromium-browser/headless_shell
-        # (файллист F46); путь передаётся Playwright'у через
+        # (файллист F44); путь передаётся Playwright'у через
         # E2E_CHROMIUM_EXECUTABLE (launchOptions в playwright.config.ts).
         if: success() && github.event.inputs.run_e2e_tests == 'true'
         run: |
