@@ -1,99 +1,123 @@
+version: "2"
 run:
-  timeout: 5m
-  tests: true
   modules-download-mode: readonly
-
+  tests: true
 linters:
-  disable-all: true
+  default: none
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - unused
-    - ineffassign
-    - gocritic
-    - revive
-    - gocyclo
+    - bodyclose
     - depguard
-    - gofmt
-    - goimports
+    - errcheck
+    - errorlint
+    - gocritic
+    - gocyclo
+    - govet
+    - ineffassign
     - misspell
+    - revive
+    - staticcheck
     - unconvert
     - unparam
-    - bodyclose
-    - errorlint
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  goimports:
-    local-prefixes: lentovodec
-  revive:
-    severity: warning
+    - unused
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1023
+        - -QF1011
+    depguard:
+      rules:
+        no-adapter-in-core:
+          list-mode: lax
+          files:
+            - '**/internal/domain/**'
+            - '**/internal/usecase/**'
+            - '**/internal/port/**'
+          deny:
+            - pkg: lentovodec/internal/adapter
+              desc: ядро (domain/usecase/port) не должно импортировать адаптеры
+        no-os-in-domain:
+          list-mode: lax
+          files:
+            - '**/internal/domain/**'
+            - '**/internal/usecase/**'
+          deny:
+            - pkg: os
+              desc: domain/usecase не должен трогать ОС напрямую; используйте порт
+            - pkg: syscall
+              desc: domain/usecase не должен трогать syscall; используйте порт
+            - pkg: golang.org/x/sys
+              desc: domain/usecase не должен трогать x/sys; используйте порт
+            - pkg: net
+              desc: domain/usecase не должен открывать соединения; используйте порт
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    gocyclo:
+      min-complexity: 15
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-naming
+        - name: error-strings
+        - name: error-return
+        - name: errorf
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: var-declaration
+        - name: var-naming
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-naming
-      - name: error-strings
-      - name: error-return
-      - name: errorf
-      - name: exported
-        disabled: true
-      - name: increment-decrement
-      - name: indent-error-flow
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: var-declaration
-      - name: var-naming
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
-  errorlint:
-    errorf: true
-    asserts: true
-    comparison: true
-  depguard:
-    rules:
-      no-os-in-domain:
-        list-mode: lax
-        files:
-          - "**/internal/domain/**"
-          - "**/internal/usecase/**"
-        deny:
-          - pkg: os
-            desc: "domain/usecase не должен трогать ОС напрямую; используйте порт"
-          - pkg: syscall
-            desc: "domain/usecase не должен трогать syscall; используйте порт"
-          - pkg: golang.org/x/sys
-            desc: "domain/usecase не должен трогать x/sys; используйте порт"
-          - pkg: net
-            desc: "domain/usecase не должен открывать соединения; используйте порт"
-      no-adapter-in-core:
-        list-mode: lax
-        files:
-          - "**/internal/domain/**"
-          - "**/internal/usecase/**"
-          - "**/internal/port/**"
-        deny:
-          - pkg: lentovodec/internal/adapter
-            desc: "ядро (domain/usecase/port) не должно импортировать адаптеры"
-
+      - linters:
+          - errcheck
+          - gocyclo
+          - gosec
+          - unparam
+        path: _test\.go
+      - linters:
+          - revive
+        path: cmd/lentovodec/main\.go
+    paths:
+      - legacy
+      - web
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-dirs:
-    - legacy
-    - web
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - gosec
-        - unparam
-    - path: cmd/lentovodec/main\.go
-      linters:
-        - revive
   max-issues-per-linter: 0
   max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - lentovodec
+  exclusions:
+    generated: lax
+    paths:
+      - legacy
+      - web
+      - third_party$
+      - builtin$
+      - examples$

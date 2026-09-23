@@ -33,6 +33,9 @@ implementation decisions (in Russian) —
   (dogfood — default fedora metalink repos removed), the fedora image
   pulled via the Nora mirror; Playwright E2E installs the system
   chromium instead of the npm package (runner disk space).
+- CI: build-test toolchain refresh — fedora:46 image, Go 1.27.1,
+  actions/checkout@v7; the local lint gate moved to golangci-lint v2
+  (`.golangci.yaml` migration, behavior unchanged).
 
 ## [1.0.1] — 2026-08-27
 
