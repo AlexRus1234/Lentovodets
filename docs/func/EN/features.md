@@ -83,6 +83,9 @@ always FULL.
   - `Modified` — size or mtime changed (xxhash64 is computed only for
     files that made it into the session);
   - `Deleted` — was in the previous session, now gone (mirror only).
+  The comparison is metadata-only: a content change with size and mtime
+  preserved is not detected (like rsync without `--checksum`); xxhash64
+  is not part of detection — it verifies integrity on write and restore.
 - **FULL** (`--full` or the first session): rewind to the beginning,
   rewrite the chain starting at session 1; old sessions are purged from
   the catalog. Recommended when starting a new increment chain.

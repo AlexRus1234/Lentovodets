@@ -80,8 +80,10 @@ assistant was used while preparing the source code.[^1]
 ### Backup
 
 - Incremental backups: new and modified files are detected by size,
-  mtime, and xxhash64; symbolic and hard links are preserved, special
-  files (FIFOs, sockets, devices) are skipped and counted
+  mtime, entry type, and link target; xxhash64 is computed only for
+  files included in a session and verified on restore; symbolic and
+  hard links are preserved, special files (FIFOs, sockets, devices)
+  are skipped and counted
 - Multi-volume backups with cartridge continuation (spanning): a session
   is split at file boundaries, each cartridge can be read with plain GNU
   tar (DR recipe — `docs/func/EN/tape-format.md`); per-job `span_depth`

@@ -38,6 +38,16 @@ implementation decisions (in Russian) —
   (`.golangci.yaml` migration, behavior unchanged). fedora:44 image
   unchanged (45/46 are not GA yet).
 
+### Fixed
+
+- README (ru/en): the incremental definition now matches the
+  implementation — changes are detected by size, mtime, entry type and
+  link target; xxhash64 is computed only for files included in a
+  session and serves as an integrity check. SPECIFICATION §4.2 and
+  `docs/func` (ru/en, features) now state the metadata-only
+  limitation: content changes with size and mtime preserved are not
+  detected.
+
 ## [1.0.1] — 2026-08-27
 
 ### Added
