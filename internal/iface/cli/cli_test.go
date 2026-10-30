@@ -21,6 +21,8 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -360,6 +362,95 @@ func TestTapeReadtest(t *testing.T) {
 	out, err := outOf(t, e, "tape", "readtest")
 	if err != nil || !strings.Contains(out, "проверено сессий: 1") {
 		t.Fatalf("readtest: %v %q", err, out)
+	}
+}
+
+func TestTapeInspect(t *testing.T) {
+	e := newEnv(t, jobTOML, nil)
+	var device string
+	e.deps.OpenTape = func(dev string) (port.Tape, error) {
+		device = dev
+		return tapeFor(e.codec), nil
+	}
+	e.codec.IdxQueue = []testutil.IdxSession{
+		{
+			Header: port.SessionHeader{
+				SessionNum: 1, Type: domain.SessionFull, Timestamp: 1700000000,
+				JobRunID: "run-1", JobName: "media", Part: 1,
+			},
+			Files: []domain.FileMeta{{Path: "/data/a", State: domain.StateAdded, Size: 5}},
+		},
+	}
+	out, err := outOf(t, e, "tape", "inspect", "/dev/nst9")
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if device != "/dev/nst9" {
+		t.Fatalf("устройство: %q, want /dev/nst9", device)
+	}
+	for _, want := range []string{"T1", "11111111-1111-4111-8111-111111111111", "сессия 1", "FULL", "media"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("inspect: в выводе нет %q: %q", want, out)
+		}
+	}
+}
+
+func TestTapeInspect_FilesAndJSON(t *testing.T) {
+	e := newEnv(t, jobTOML, nil)
+	e.deps.OpenTape = func(string) (port.Tape, error) { return tapeFor(e.codec), nil }
+	e.codec.IdxQueue = []testutil.IdxSession{
+		{
+			Header: port.SessionHeader{
+				SessionNum: 1, Type: domain.SessionFull, Timestamp: 1700000000,
+				JobRunID: "run-1", JobName: "media", Part: 1,
+			},
+			Files: []domain.FileMeta{
+				{Path: "/data/a", State: domain.StateAdded, Size: 5},
+				{Path: "/data/gone", State: domain.StateDeleted},
+			},
+		},
+	}
+	var js struct {
+		Label    struct{ Name string } `json:"label"`
+		Sessions []struct {
+			SessionNum int32             `json:"session_num"`
+			Files      int               `json:"files"`
+			Bytes      int64             `json:"bytes"`
+			Entries    []domain.FileMeta `json:"entries"`
+		} `json:"sessions"`
+	}
+	out, err := outOf(t, e, "tape", "inspect", "/dev/nst0", "--json", "--label", "--files")
+	if err != nil {
+		t.Fatalf("inspect --json: %v", err)
+	}
+	if err := json.Unmarshal([]byte(out), &js); err != nil {
+		t.Fatalf("inspect --json: разбор: %v\n%s", err, out)
+	}
+	if js.Label.Name != "T1" {
+		t.Fatalf("label.name: %q", js.Label.Name)
+	}
+	if len(js.Sessions) != 1 || js.Sessions[0].Files != 2 || js.Sessions[0].Bytes != 5 {
+		t.Fatalf("sessions: %+v", js.Sessions)
+	}
+	if len(js.Sessions[0].Entries) != 2 {
+		t.Fatalf("entries: %+v", js.Sessions[0].Entries)
+	}
+}
+
+func TestTapeInspect_WithoutConfig(t *testing.T) {
+	// DR-путь: команда не читает конфиг — OpenTape получает устройство
+	// из аргумента, OpenConfig не вызывается.
+	e := newEnv(t, jobTOML, nil)
+	e.deps.OpenTape = func(string) (port.Tape, error) { return tapeFor(e.codec), nil }
+	e.deps.OpenConfig = func(string, map[string]string) (cli.ConfigFile, error) {
+		return nil, errors.New("конфиг не нужен для inspect")
+	}
+	e.codec.IdxQueue = []testutil.IdxSession{
+		{Header: port.SessionHeader{SessionNum: 1, Type: domain.SessionFull, Part: 1}},
+	}
+	out, err := outOf(t, e, "tape", "inspect", "/dev/nst0")
+	if err != nil || !strings.Contains(out, "сессия 1") {
+		t.Fatalf("inspect без конфига: %v %q", err, out)
 	}
 }
 

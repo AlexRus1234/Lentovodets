@@ -210,8 +210,10 @@ func (f *writeFilter) writable(p string) bool {
 }
 
 // damage помечает ошибку как повреждение данных сессии
-// (domain.SessionDamageError): restore full / readtest пропускают
-// сессию с Warn, транспортный сбой ленты — нет.
+// (domain.SessionDamageError): restore full пропускает сессию с Warn,
+// smart-restore переходит к следующей копии; readtest, selective и
+// tape inspect возвращают ошибку; транспортный сбой ленты не
+// классифицируется как повреждение.
 func damage(err error) error {
 	return errors.Join(&domain.SessionDamageError{}, err)
 }

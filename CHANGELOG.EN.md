@@ -29,6 +29,13 @@ implementation decisions (in Russian) —
 
 ### Added
 
+- Command `tape inspect <device> [--json] [--label] [--sessions]
+  [--files]` — cartridge inventory without configuration or the SQLite
+  catalog (DR path): the label and all session indexes are read straight
+  from the device, tar streams are not read. A damaged index is an
+  error; a continuation block yields the next tape name of the chain.
+  The "tape vs configuration" boundary is fixed in FORMAT §12.
+
 - Session index: `index_sha256` checksum — sha256 of the canonical form,
   rule `hash_algo: "sha256-canon1"` (FORMAT §5.2). Verified after
   parsing, before the data is used; a mismatch yields

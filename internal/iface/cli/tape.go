@@ -40,6 +40,7 @@ func newTapeCmd(deps Deps, flags *globalFlags) *cobra.Command {
 	cmd.AddCommand(
 		newTapeFormatCmd(deps, flags),
 		newTapeReadtestCmd(deps, flags),
+		newTapeInspectCmd(deps),
 		newTapeInfoCmd(deps, flags),
 		newTapeEjectCmd(deps, flags),
 	)

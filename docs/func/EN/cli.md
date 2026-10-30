@@ -195,6 +195,7 @@ restored 512 files, 34 directories, skipped 0 (sessions read 2)
 |---|---|---|
 | `lentovodec tape format <name> [--force]` | local | Format a cartridge: label (UUID, name) + double EOF + a catalog entry. `--force` — re-format an already formatted one |
 | `lentovodec tape readtest` | local | Diagnostic read of the whole cartridge with hash verification, nothing written to the FS; for spanning chains — a report per cartridge (chain following is the same as for restore) |
+| `lentovodec tape inspect <device> [--json] [--label] [--sessions] [--files]` | local | Cartridge inventory without config or DB: the label and all session indexes (DR path); tar streams are not read |
 | `lentovodec tape info` | daemon | Read the label and the active TapeAlert flags of the current cartridge |
 | `lentovodec tape eject` | daemon | Eject the cartridge (MTOFFL) |
 

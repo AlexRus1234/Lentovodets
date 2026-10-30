@@ -165,6 +165,23 @@ multi-volume mode `tar -xM` does not fit: the label precedes the tar,
 and a volume change requires reopening the device from the beginning
 of the tape.
 
+### Cartridge inventory: `tape inspect`
+
+What sits on a cartridge can be listed without a config or the catalog:
+
+```bash
+lentovodec tape inspect /dev/nst0            # label + session summary
+lentovodec tape inspect /dev/nst0 --files    # with file listings
+lentovodec tape inspect /dev/nst0 --json     # machine-readable output
+```
+
+The command reads the label and all session indexes (tar streams are
+not read, hashes are not verified — that is what `readtest` is for).
+The inventory is a physical pass over the tape: a full cartridge takes
+minutes. Permissions (they live in tar headers), schedules, retention
+and library parameters are deliberately absent from the tape — they are
+config and catalog policy, not media content (FORMAT §12).
+
 ## Versioning and compatibility
 
 - Any format change bumps `format_version` in the label.
