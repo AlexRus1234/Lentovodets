@@ -131,6 +131,9 @@ assistant was used while preparing the source code.[^1]
   the inserted cartridge (DR: lost `lentovodec.db`, a cartridge unknown
   to the catalog, migration to a new machine); idempotent, the tar
   stream is not read
+- `tape inspect <device>` — cartridge inventory without a config or the
+  catalog: the label and all session indexes (DR path, FORMAT §12);
+  `--json` for scripts
 - Smart restore relies on the catalog and survives physical corruption
   of an individual file copy
 

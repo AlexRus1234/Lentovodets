@@ -104,6 +104,7 @@ lentovodec/
 │   │   ├── backup/            # BackupUseCase
 │   │   ├── restore/           # RestoreUseCase: full/selective/smart
 │   │   ├── format/            # FormatTapeUseCase
+│   │   ├── inspect/           # InspectUseCase: ярлык + индексы без каталога
 │   │   └── catalog/           # CatalogUseCase: list/search/prune/delete
 │   ├── adapter/               # РЕАЛИЗАЦИИ port
 │   │   ├── tapeformat/        # чистый stream+block format (no I/O)
