@@ -105,6 +105,10 @@ Each session is an "JSON index + tar stream" pair:
 - The encoder checks the hash on write too: a file that changed between
   the scan and the write is an error, not a silent corruption of the
   index.
+- The session index carries `index_sha256` — sha256 of the canonical
+  form (FORMAT §5.2). A mismatch means the session is damaged: full
+  restore skips it with a warning, readtest reports an error; tapes
+  without the field are not checked.
 
 ## Full and INC
 

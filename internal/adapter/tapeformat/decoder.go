@@ -140,11 +140,16 @@ func readIndex(ctx context.Context, tape port.Tape) (*SessionIndex, error) {
 	if err := json.Unmarshal(trimmed, &idx); err != nil {
 		return nil, damage(fmt.Errorf("tapeformat: разбор индекса: %w", err))
 	}
-	if idx.Part < 1 {
-		idx.Part = 1 // старые ленты без поля part — все сессии часть 1
-	}
 	if idx.FormatVersion > domain.FormatVersion {
 		return nil, &domain.NewerFormatError{Found: idx.FormatVersion, Supported: domain.FormatVersion}
+	}
+	// КС проверяется по сырым полям — до нормализации part и путей:
+	// каноническая форма считалась по тому, что записано (FORMAT §5.2).
+	if err := verifyIndexHash(&idx); err != nil {
+		return nil, damage(err)
+	}
+	if idx.Part < 1 {
+		idx.Part = 1 // старые ленты без поля part — все сессии часть 1
 	}
 	if !idx.Type.Valid() {
 		return nil, damage(fmt.Errorf("tapeformat: недопустимый тип сессии %q в индексе", idx.Type))

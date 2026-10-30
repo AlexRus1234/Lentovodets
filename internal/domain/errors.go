@@ -359,3 +359,31 @@ func (e *SessionDamageError) Is(target error) bool {
 	_, ok := target.(*SessionDamageError)
 	return ok
 }
+
+// IndexCorruptError — контрольная сумма индекса сессии не совпала с его
+// содержимым (docs/FORMAT.md §5.2): JSON разобрался, но данные индекса не
+// те, что были записаны. Это доказанная порча индекса, а не просто маркер,
+// как SessionDamageError. Адаптер tapeformat присоединяет маркер
+// SessionDamageError через errors.Join: full-restore пропускает такую
+// сессию с Warn, smart-restore переходит к следующей копии, а readtest и
+// selective возвращают ошибку — диагностика носителя обязана сообщать о
+// порче, а не молча пропускать её.
+type IndexCorruptError struct {
+	SessionNum int32  // номер сессии (части) на её кассете
+	Algo       string // правило канонической формы ("sha256-canon1")
+	Recorded   string // контрольная сумма из индекса
+	Computed   string // сумма, посчитанная по прочитанным полям
+}
+
+// Error реализует интерфейс error.
+func (e *IndexCorruptError) Error() string {
+	return fmt.Sprintf(
+		"сессия %d: контрольная сумма индекса не совпала (%s): в индексе %s, посчитано %s",
+		e.SessionNum, e.Algo, e.Recorded, e.Computed)
+}
+
+// Is поддерживает errors.Is(err, &IndexCorruptError{}).
+func (e *IndexCorruptError) Is(target error) bool {
+	_, ok := target.(*IndexCorruptError)
+	return ok
+}

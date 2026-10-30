@@ -27,6 +27,16 @@ implementation decisions (in Russian) —
 
 ## [Unreleased]
 
+### Added
+
+- Session index: `index_sha256` checksum — sha256 of the canonical form,
+  rule `hash_algo: "sha256-canon1"` (FORMAT §5.2). Verified after
+  parsing, before the data is used; a mismatch yields
+  `IndexCorruptError`: full restore skips the session with a warning,
+  smart restore falls back to the next copy, readtest and selective
+  restore return an error. Tapes without the field are read as before,
+  without verification.
+
 ### Changed
 
 - CI: dnf in build-test goes exclusively through Khrazhevnik

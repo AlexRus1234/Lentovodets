@@ -44,7 +44,12 @@ type SessionIndex struct {
 	JobName       string             `json:"job_name"`
 	Part          int32              `json:"part,omitempty"`
 	Continues     string             `json:"continues,omitempty"`
-	Files         []domain.FileMeta  `json:"files"`
+	// IndexSHA256 — hex sha256 канонической формы индекса
+	// (docs/FORMAT.md §5.2); пусто у лент, записанных до поля.
+	IndexSHA256 string `json:"index_sha256,omitempty"`
+	// HashAlgo — правило канонической формы: "sha256-canon1".
+	HashAlgo string            `json:"hash_algo,omitempty"`
+	Files    []domain.FileMeta `json:"files"`
 }
 
 // WriteSession пишет одну сессию в текущую позицию ленты:
@@ -110,8 +115,10 @@ func validateIndex(idx *SessionIndex) error {
 }
 
 // writeIndex кодирует индекс (JSON, добитый нулями до кратного BlockSize)
-// и пишет его блоками, завершая filemark'ом.
+// и пишет его блоками, завершая filemark'ом. Контрольная сумма считается
+// по уже нормализованным полям (docs/FORMAT.md §5.2).
 func writeIndex(ctx context.Context, tape port.Tape, idx SessionIndex) error {
+	sealIndex(&idx)
 	padded, err := encodeBlocks(idx, 0)
 	if err == nil {
 		err = writeIndexBlocks(ctx, tape, padded)
