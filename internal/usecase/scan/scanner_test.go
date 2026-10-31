@@ -18,6 +18,8 @@ package scan_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -33,20 +35,45 @@ import (
 )
 
 // sumHash — детерминированный фейковый хеш: hex от суммы байт.
-func sumHash(r io.Reader) (string, error) {
+func sumHash(r io.Reader) (string, string, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sum := 0
 	for _, c := range b {
 		sum += int(c)
 	}
-	return fmt.Sprintf("%016x", sum), nil
+	sha := sha256.Sum256(b)
+	return fmt.Sprintf("%016x", sum), hex.EncodeToString(sha[:]), nil
 }
 
 func newScanner(fs port.Filesystem) *scan.Scanner {
 	return scan.New(fs, testutil.HashFunc(sumHash), nil, testutil.NoopLogger())
+}
+
+// TestScan_FillsBothHashes — запись получает оба хеша из одного
+// прохода Hasher.Hash (ишью №4): Hash (xxhash64) и SHA256.
+func TestScan_FillsBothHashes(t *testing.T) {
+	fs := testutil.NewMapFS(map[string]string{"etc/hosts": "x"})
+	s := scan.New(fs, testutil.HashFunc(sumHash), nil, testutil.NoopLogger())
+	files, err := s.Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"}}, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, fm := range files {
+		if fm.Path == "/etc/hosts" {
+			if fm.Hash == "" || fm.SHA256 == "" {
+				t.Errorf("хеши записи: hash=%q sha256=%q; want оба заполнены", fm.Hash, fm.SHA256)
+			}
+			want := sha256.Sum256([]byte("x"))
+			if fm.SHA256 != hex.EncodeToString(want[:]) {
+				t.Errorf("SHA256 = %q; want sha256(x)", fm.SHA256)
+			}
+			return
+		}
+	}
+	t.Fatal("запись /etc/hosts не отсканирована")
 }
 
 func TestScan_AppendStates(t *testing.T) {
@@ -375,7 +402,7 @@ func TestScan_WalkError(t *testing.T) {
 func TestScan_HashErrorPropagates(t *testing.T) {
 	fs := testutil.NewMapFS(map[string]string{"etc/f": "x"})
 	boom := errors.New("boom")
-	s := scan.New(fs, testutil.HashFunc(func(io.Reader) (string, error) { return "", boom }), nil, testutil.NoopLogger())
+	s := scan.New(fs, testutil.HashFunc(func(io.Reader) (string, string, error) { return "", "", boom }), nil, testutil.NoopLogger())
 	_, err := s.Scan(context.Background(), domain.Job{Name: "j", Mode: domain.ModeAppend, Paths: []string{"/etc"}}, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("Scan: %v; want boom", err)

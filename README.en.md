@@ -113,7 +113,9 @@ assistant was used while preparing the source code.[^1]
 - **Smart** — by paths through the catalog: the freshest copy is taken,
   a corrupt block falls back to older copies; no healthy copy left → a
   clear error
-- xxhash64 is verified on every restore
+- Per-file checksums: xxhash64 (all tapes) plus sha256 on new ones —
+  verified on every restore; sha256 is checkable on a rescue machine
+  with bare `sha256sum` from coreutils
 - Restore into a safe directory (`--dest`) or to original paths
   (`--original`); `--dest` never writes outside the destination
   directory (`..` paths and escapes through restored symlinks are

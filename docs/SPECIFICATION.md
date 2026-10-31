@@ -73,6 +73,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 | `ModTime`  | int64      | Unix-наносекунды (или миллисекунды — зафиксировать в impl.)     |
 | `IsDir`    | bool       | true для каталогов                                              |
 | `Hash`     | string     | xxhash64 в hex (16 символов); пустой для каталогов и tombstone'ов |
+| `SHA256`   | string     | sha256 в hex (64 символа), аддитивно; пустой у лент, записанных до поля — сверка тогда по `Hash` |
 | `State`    | `FileState`| См. 2.5                                                         |
 | `Type`     | `FileType` | `reg` (по умолчанию), `sym` или `lnk`                            |
 | `Linkname` | string     | цель симлинка или путь первого hardlink; пусто для `reg`         |
@@ -143,6 +144,7 @@ CREATE TABLE files (
     mod_time    INTEGER NOT NULL,
     is_dir      BOOLEAN NOT NULL,
     hash        TEXT NOT NULL,
+    sha256      TEXT NOT NULL DEFAULT '',
     state       TEXT NOT NULL CHECK (state IN ('A', 'M', 'D')),
     type        TEXT NOT NULL DEFAULT 'reg',
     linkname    TEXT NOT NULL DEFAULT '',
@@ -212,7 +214,9 @@ CREATE INDEX idx_sessions_tape ON sessions(tape_uuid, session_num);
 размере и mtime не обнаруживается (поведение rsync без `--checksum`).
 `xxhash64` в детекте изменений не участвует — он считается только для
 записей, уже попавших в сессию, и служит проверкой целостности при
-записи и восстановлении (FORMAT §7).
+записи и восстановлении (FORMAT §7). Тем же проходом чтения считается
+sha256 (поле `SHA256`, ишью №4): сверка содержимого приоритетно по
+SHA-256, xxhash64 — у лент, записанных до поля.
 
 Каждая сессия несёт снапшот конфигурации задания (FORMAT §5.0.1):
 resolved-`domain.Job` после слияния слоёв, `job_config_hash`, версия
@@ -704,7 +708,7 @@ Exclude = ["/home/*/.cache/**"]
 | Отмена операций    | `context.Context` во всех use case; демон отменяет задачу по SIGINT |
 | Прогресс           | `port.ProgressReporter`, throttle 2 Гц                            |
 | Производительность | Блочный I/O 256 KiB; buffering 4 MiB при копировании файлов       |
-| Целостность        | xxhash64 каждого файла, проверяется при любом restore; `index_sha256` канонической формы индекса (правило `sha256-canon2`, FORMAT §5.2), несовпадение — `IndexCorruptError`; снапшот конфигурации покрыт КС и не содержит секретов |
+| Целостность        | xxhash64 каждого файла + per-file sha256 у новых лент (сверка при любом restore, приоритет — sha256; проверяемо голым `sha256sum`); `index_sha256` канонической формы индекса (правило `sha256-canon3`, FORMAT §5.2), несовпадение — `IndexCorruptError`; снапшот конфигурации покрыт КС и не содержит секретов |
 | Безопасность       | Rootless: критерий доступа — probe устройства, не uid (см. §9.1)  |
 | Аутентификация Web | Логин/пароль (bcrypt) + сессии в памяти; bind по умолчанию loopback (см. §9.2) |
 | Graceful shutdown  | Демон ловит SIGINT/SIGTERM, ждёт завершения активной задачи до 30с |

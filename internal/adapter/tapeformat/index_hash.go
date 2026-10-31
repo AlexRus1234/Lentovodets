@@ -32,18 +32,24 @@ import (
 
 const (
 	// IndexHashAlgo — правило, которым sealIndex подписывает новые
-	// индексы: canon2 покрывает поля снапшота конфигурации задания.
-	IndexHashAlgo = "sha256-canon2"
+	// индексы: canon3 покрывает per-file sha256 (ишью №4); canon2 —
+	// снапшот конфигурации; canon1 — ленты до снапшота.
+	IndexHashAlgo = "sha256-canon3"
+
+	// indexHashAlgoCanon2 — правило лент, записанных со снапшотом
+	// конфигурации до per-file sha256 (8e54f41): per-file sha256 в
+	// форму canon2 не входит.
+	indexHashAlgoCanon2 = "sha256-canon2"
 
 	// indexHashAlgoCanon1 — правило лент, записанных до снапшота
-	// (4a835af): снапшотные поля в canon1 не входят, проверка старых
-	// лент идёт по нему и дальше.
+	// (4a835af): снапшотные поля в canon1 не входят.
 	indexHashAlgoCanon1 = "sha256-canon1"
 )
 
 // canonicalPrefix — доменное разделение правила по версии: хеш
 // другого объекта с теми же полями не совпадёт с индексным.
 const (
+	canonicalPrefixV3 = "lentovodec.index.canon3\n"
 	canonicalPrefixV2 = "lentovodec.index.canon2\n"
 	canonicalPrefixV1 = "lentovodec.index.canon1\n"
 )
@@ -54,14 +60,17 @@ const (
 // экранирования: имя файла на Linux может содержать любые байты,
 // кроме NUL и '/'. Числа — десятичный ASCII, bool — "0"/"1", пустая
 // строка — длина 0. canon2 добавляет после continues поля снапшота
-// конфигурации (docs/FORMAT.md §5.2); canon1 — форма лент до
-// снапшота, снапшотные поля в неё не входят.
+// конфигурации (docs/FORMAT.md §5.2); canon3 — ещё и per-file sha256
+// после hash; canon1 — форма лент до снапшота.
 func canonicalIndex(idx *SessionIndex, algo string) []byte {
 	var buf bytes.Buffer
-	if algo == indexHashAlgoCanon1 {
+	switch algo {
+	case indexHashAlgoCanon1:
 		buf.WriteString(canonicalPrefixV1)
-	} else {
+	case indexHashAlgoCanon2:
 		buf.WriteString(canonicalPrefixV2)
+	default:
+		buf.WriteString(canonicalPrefixV3)
 	}
 	writeField := func(s string) {
 		var n [8]byte
@@ -92,6 +101,9 @@ func canonicalIndex(idx *SessionIndex, algo string) []byte {
 		writeField(strconv.FormatInt(fm.ModTime, 10))
 		writeField(boolField(fm.IsDir))
 		writeField(fm.Hash)
+		if algo == IndexHashAlgo {
+			writeField(fm.SHA256)
+		}
 		writeField(string(fm.State))
 		writeField(string(fm.Type))
 		writeField(fm.Linkname)
@@ -135,14 +147,14 @@ func sealIndex(idx *SessionIndex) {
 // нормализации и использования полей. Отсутствие поля — лента записана
 // до появления КС: проверка не выполняется. Незнакомое правило — индекс
 // записан более новым бинарём: проверить нечем, чтение не блокируется
-// (DR важнее обнаружения подмены; см. docs/FORMAT.md §5.2). canon1
-// проверяется по canon1: ленты, записанные до снапшота, — как раньше.
+// (DR важнее обнаружения подмены; см. docs/FORMAT.md §5.2). Ленты
+// canon1/canon2 проверяются по своим правилам, как раньше.
 func verifyIndexHash(idx *SessionIndex) error {
 	if idx.IndexSHA256 == "" {
 		return nil
 	}
 	switch idx.HashAlgo {
-	case IndexHashAlgo, indexHashAlgoCanon1:
+	case IndexHashAlgo, indexHashAlgoCanon2, indexHashAlgoCanon1:
 	default:
 		return nil
 	}

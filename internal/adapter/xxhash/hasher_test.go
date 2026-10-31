@@ -28,21 +28,25 @@ import (
 
 func TestHasher_KnownVectors(t *testing.T) {
 	cases := []struct {
-		in   string
-		want string
+		in      string
+		want    string
+		wantSHA string
 	}{
-		{"", "ef46db3751d8e999"},
-		{"a", "d24ec4f1a98c6e5b"},
-		{"abc", "44bc2cf5ad770999"},
+		{"", "ef46db3751d8e999", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		{"a", "d24ec4f1a98c6e5b", "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"},
+		{"abc", "44bc2cf5ad770999", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
 	}
 	var h port.Hasher = xxhash.New()
 	for _, tc := range cases {
-		got, err := h.Hash(strings.NewReader(tc.in))
+		got, sha, err := h.Hash(strings.NewReader(tc.in))
 		if err != nil {
 			t.Fatalf("Hash(%q): %v", tc.in, err)
 		}
 		if got != tc.want {
-			t.Errorf("Hash(%q) = %s; want %s", tc.in, got, tc.want)
+			t.Errorf("Hash(%q) xx = %s; want %s", tc.in, got, tc.want)
+		}
+		if sha != tc.wantSHA {
+			t.Errorf("Hash(%q) sha256 = %s; want %s", tc.in, sha, tc.wantSHA)
 		}
 	}
 }
@@ -50,7 +54,7 @@ func TestHasher_KnownVectors(t *testing.T) {
 func TestHasher_ReaderError(t *testing.T) {
 	boom := errors.New("boom")
 	h := xxhash.New()
-	if _, err := h.Hash(errReader{boom}); !errors.Is(err, boom) {
+	if _, _, err := h.Hash(errReader{boom}); !errors.Is(err, boom) {
 		t.Fatalf("Hash: %v; want boom", err)
 	}
 }

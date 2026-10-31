@@ -128,8 +128,8 @@ func envAt(t *testing.T, cfgDir string, client cli.ServerClient) *env {
 		OpenCatalog: func(string) (port.Catalog, error) { return cat, nil },
 		FS:          testutil.NewMapFS(nil),
 		Codec:       codec,
-		Hasher: testutil.HashFunc(func(io.Reader) (string, error) {
-			return "0000000000000000", nil
+		Hasher: testutil.HashFunc(func(io.Reader) (string, string, error) {
+			return "0000000000000000", "", nil
 		}),
 		Rand:  testutil.FixedRand(tapeUUID),
 		Clock: testutil.FixedClock(time.Unix(1700000000, 0)),

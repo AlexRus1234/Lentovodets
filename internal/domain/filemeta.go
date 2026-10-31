@@ -67,11 +67,12 @@ func (s FileState) Valid() bool {
 
 // FileMeta — метаданные одного файла в конкретной сессии.
 type FileMeta struct {
-	Path     string    `json:"path"`     // всегда NormalizePath
-	Size     int64     `json:"size"`     // байты; 0 для каталогов
-	ModTime  int64     `json:"mod_time"` // Unix-наносекунды mtime файла
-	IsDir    bool      `json:"is_dir"`   // true для каталогов
-	Hash     string    `json:"hash"`     // xxhash64 hex (16 символов); "" для каталогов и tombstone'ов
+	Path     string    `json:"path"`             // всегда NormalizePath
+	Size     int64     `json:"size"`             // байты; 0 для каталогов
+	ModTime  int64     `json:"mod_time"`         // Unix-наносекунды mtime файла
+	IsDir    bool      `json:"is_dir"`           // true для каталогов
+	Hash     string    `json:"hash"`             // xxhash64 hex (16 символов); "" для каталогов и tombstone'ов
+	SHA256   string    `json:"sha256,omitempty"` // hex sha256 (64 символа), ишью №4; "" у каталогов, tombstone'ов и лент, записанных до поля; сверяется приоритетно при наличии
 	State    FileState `json:"state"`
 	Type     FileType  `json:"type,omitempty"`
 	Linkname string    `json:"linkname,omitempty"`

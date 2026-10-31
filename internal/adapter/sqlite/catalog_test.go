@@ -199,6 +199,7 @@ func TestSaveFiles_Roundtrip(t *testing.T) {
 		file("/dir/b.txt", "bb", domain.StateModified),
 		{Path: "/dir/gone.txt", State: domain.StateDeleted},
 	}
+	want[1].SHA256 = strings.Repeat("ab", 32) // per-file sha256 (ишью №4) проходит раундтрипом
 	if err := c.SaveFiles(ctx, id, want); err != nil {
 		t.Fatalf("SaveFiles: %v", err)
 	}

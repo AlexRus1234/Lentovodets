@@ -47,10 +47,10 @@ const (
 
 	selectLastSessionNumSQL = `SELECT COALESCE(MAX(session_num), 0) FROM sessions WHERE tape_uuid = ?`
 
-	insertFileSQL = `INSERT INTO files (session_id, path, size, mod_time, is_dir, hash, state, type, linkname)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertFileSQL = `INSERT INTO files (session_id, path, size, mod_time, is_dir, hash, sha256, state, type, linkname)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	selectLatestStatesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname
+	selectLatestStatesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.sha256, f.state, f.type, f.linkname
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
 		WHERE f.path IN (%s)
@@ -70,17 +70,17 @@ const (
 
 	sessionExistsSQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)`
 
-	selectFilesBySessionSQL = `SELECT path, size, mod_time, is_dir, hash, state, type, linkname
+	selectFilesBySessionSQL = `SELECT path, size, mod_time, is_dir, hash, sha256, state, type, linkname
 		FROM files WHERE session_id = ? ORDER BY path`
 
-	selectFileCopiesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname,
+	selectFileCopiesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.sha256, f.state, f.type, f.linkname,
 			s.id, s.session_num, s.tape_uuid, s.timestamp
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
 		WHERE f.path = ?
 		ORDER BY s.timestamp DESC, s.id DESC`
 
-	searchFilesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.state, f.type, f.linkname,
+	searchFilesSQL = `SELECT f.path, f.size, f.mod_time, f.is_dir, f.hash, f.sha256, f.state, f.type, f.linkname,
 			s.id, s.session_num, s.tape_uuid, s.timestamp
 		FROM files f
 		JOIN sessions s ON s.id = f.session_id
@@ -204,7 +204,7 @@ func (c *Catalog) SaveFiles(ctx context.Context, sessionID int64, files []domain
 	for i := range files {
 		f := &files[i]
 		if _, err := stmt.ExecContext(ctx,
-			sessionID, f.Path, f.Size, f.ModTime, f.IsDir, f.Hash, string(f.State), f.Type, f.Linkname); err != nil {
+			sessionID, f.Path, f.Size, f.ModTime, f.IsDir, f.Hash, f.SHA256, string(f.State), f.Type, f.Linkname); err != nil {
 			return rollback(tx, fmt.Errorf("sqlite: вставка файла %q (сессия %d): %w", f.Path, sessionID, err))
 		}
 	}
@@ -248,7 +248,7 @@ func (c *Catalog) latestStatesBatch(ctx context.Context, paths []string, states 
 	return scanAll(rows, func(rows *sql.Rows) error {
 		var fm domain.FileMeta
 		var state, typ string
-		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state, &typ, &fm.Linkname); err != nil {
+		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &fm.SHA256, &state, &typ, &fm.Linkname); err != nil {
 			return fmt.Errorf("sqlite: чтение строки состояния: %w", err)
 		}
 		fm.State = domain.FileState(state)
@@ -363,7 +363,7 @@ func (c *Catalog) GetFilesBySession(ctx context.Context, sessionID int64) ([]dom
 	scanErr := scanAll(rows, func(rows *sql.Rows) error {
 		var fm domain.FileMeta
 		var state, typ string
-		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &state, &typ, &fm.Linkname); err != nil {
+		if err := rows.Scan(&fm.Path, &fm.Size, &fm.ModTime, &fm.IsDir, &fm.Hash, &fm.SHA256, &state, &typ, &fm.Linkname); err != nil {
 			return fmt.Errorf("sqlite: чтение файла сессии %d: %w", sessionID, err)
 		}
 		fm.State = domain.FileState(state)
@@ -398,7 +398,7 @@ func (c *Catalog) fileCopies(ctx context.Context, query, desc string, args ...an
 		var fc port.FileCopy
 		var state, typ string
 		if err := rows.Scan(&fc.Meta.Path, &fc.Meta.Size, &fc.Meta.ModTime,
-			&fc.Meta.IsDir, &fc.Meta.Hash, &state, &typ, &fc.Meta.Linkname,
+			&fc.Meta.IsDir, &fc.Meta.Hash, &fc.Meta.SHA256, &state, &typ, &fc.Meta.Linkname,
 			&fc.SessionID, &fc.SessionNum, &fc.TapeUUID, &fc.Timestamp); err != nil {
 			return fmt.Errorf("sqlite: %s: чтение строки: %w", desc, err)
 		}

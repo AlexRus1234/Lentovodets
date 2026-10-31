@@ -14,16 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Порт хеширования файлов. См. docs/FORMAT.md §2 (xxhash64, hex 16).
+// Порт хеширования файлов. См. docs/FORMAT.md §2 (hash — xxhash64,
+// hex 16; sha256 — hex 64, ишью №4).
 
 package port
 
 import "io"
 
-// Hasher — вычисление контрольной суммы файла.
+// Hasher — вычисление контрольных сумм файла.
 // Реализация: adapter/xxhash.
 type Hasher interface {
 	// Hash возвращает канонический hex-xxhash64 (16 символов,
-	// lowercase) содержимого r.
-	Hash(r io.Reader) (string, error)
+	// lowercase) и hex-sha256 (64 символа) содержимого r — оба
+	// дайджеста за один проход чтения: любое чтение файла целиком
+	// дорого, дублировать его ради второго хеша нельзя.
+	Hash(r io.Reader) (hash, sha256 string, err error)
 }

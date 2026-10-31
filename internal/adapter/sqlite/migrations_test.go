@@ -76,7 +76,7 @@ func userVersion(t *testing.T, path string) int {
 }
 
 // TestMigrateV0ToV2_ExistingDB: БД старой схемы открывается конструктором,
-// колонки part и special-file добавляются, user_version = 2.
+// колонки part, special-file и sha256 добавляются, user_version = 3.
 func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	path := t.TempDir() + "/catalog.db"
 	raw, err := sql.Open("sqlite", path)
@@ -114,8 +114,8 @@ func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	if len(sessions) != 2 || sessions[0].Part != 1 || sessions[1].Part != 1 {
 		t.Fatalf("старые строки: %+v, want part=1 у обеих", sessions)
 	}
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, path); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 
 	// Повторное открытие: миграция не применяется второй раз.
@@ -126,8 +126,8 @@ func TestMigrateV0ToV1_ExistingDB(t *testing.T) {
 	if err := c2.Close(); err != nil {
 		t.Fatalf("Close повторно: %v", err)
 	}
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version после повторного открытия = %d, want 2", v)
+	if v := userVersion(t, path); v != 3 {
+		t.Fatalf("user_version после повторного открытия = %d, want 3", v)
 	}
 }
 
@@ -159,8 +159,8 @@ func TestMigrateV1_ColumnAlreadyExists(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, path); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }
 
@@ -200,8 +200,8 @@ func TestFreshDB_SchemaV1(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	if v := userVersion(t, path); v != 2 {
-		t.Fatalf("user_version свежей БД = %d, want 2", v)
+	if v := userVersion(t, path); v != 3 {
+		t.Fatalf("user_version свежей БД = %d, want 3", v)
 	}
 
 	ctx := context.Background()

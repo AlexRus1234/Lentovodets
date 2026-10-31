@@ -29,8 +29,6 @@ import (
 	"os"
 	"path"
 
-	"github.com/cespare/xxhash/v2"
-
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
 )
@@ -380,7 +378,7 @@ func extractFile(
 			"tapeformat: файл %q: размер в tar %d, в индексе %d",
 			fm.Path, hdr.Size, fm.Size))
 	}
-	digest := xxhash.New()
+	digest := newContentDigest(fm)
 	var out io.WriteCloser
 	w := io.Writer(digest)
 	if dest != nil {
@@ -403,10 +401,10 @@ func extractFile(
 	if copyErr != nil {
 		return discardPartial(dest, fm.Path, copyErr)
 	}
-	if got := hashHex(digest.Sum64()); got != fm.Hash {
+	if got, want := digest.result(); got != want {
 		return discardPartial(dest, fm.Path, damage(fmt.Errorf(
 			"tapeformat: файл %q повреждён: хеш индекса %q, фактический %s",
-			fm.Path, fm.Hash, got)))
+			fm.Path, want, got)))
 	}
 	return nil
 }

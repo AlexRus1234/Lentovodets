@@ -68,6 +68,7 @@ func TestGoldenSessionSnapshot(t *testing.T) {
 			Size:    1,
 			ModTime: 1700000001,
 			Hash:    hashOf("a"),
+			SHA256:  sha256Of("a"),
 			State:   domain.StateAdded,
 		}},
 	}

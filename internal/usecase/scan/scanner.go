@@ -155,7 +155,7 @@ func (s *Scanner) scanEntry(
 		cur.State = domain.StateAdded
 	}
 	if !cur.IsDir && !cur.IsSymlink() && !cur.IsHardlink() {
-		cur.Hash, err = s.hashFile(cur.Path)
+		cur.Hash, cur.SHA256, err = s.hashFile(cur.Path)
 		if err != nil {
 			return domain.FileMeta{}, false, false, err
 		}
@@ -243,21 +243,22 @@ func excludedPath(p string, patterns []string) bool {
 	return false
 }
 
-// hashFile открывает файл и возвращает его контрольную сумму.
-func (s *Scanner) hashFile(path string) (string, error) {
+// hashFile открывает файл и возвращает обе контрольные суммы
+// (xxhash64 и sha256, один проход чтения).
+func (s *Scanner) hashFile(path string) (string, string, error) {
 	src, err := s.fs.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("scan: открытие %q: %w", path, err)
+		return "", "", fmt.Errorf("scan: открытие %q: %w", path, err)
 	}
-	hash, hashErr := s.hasher.Hash(src)
+	hash, sha256, hashErr := s.hasher.Hash(src)
 	closeErr := src.Close()
 	if hashErr != nil {
-		return "", fmt.Errorf("scan: хеш %q: %w", path, hashErr)
+		return "", "", fmt.Errorf("scan: хеш %q: %w", path, hashErr)
 	}
 	if closeErr != nil {
-		return "", fmt.Errorf("scan: закрытие %q: %w", path, closeErr)
+		return "", "", fmt.Errorf("scan: закрытие %q: %w", path, closeErr)
 	}
-	return hash, nil
+	return hash, sha256, nil
 }
 
 // report публикует снимок прогресса, если репортёр задан.

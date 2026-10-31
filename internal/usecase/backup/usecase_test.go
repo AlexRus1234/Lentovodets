@@ -147,7 +147,7 @@ func (h *harness) build(t port.Tape) *backup.UseCase {
 		cfg = &fakeConfig{jobs: jobsAppend()}
 	}
 	return backup.New(cfg, t, h.codec, cat, h.fs,
-		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
+		testutil.HashFunc(func(r io.Reader) (string, string, error) { return "h", "", nil }),
 		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger(), h.changer,
 		"test-version")
 }
@@ -372,7 +372,7 @@ func TestBackup_MirrorTombstoneStats(t *testing.T) {
 	h.uc = backup.New(
 		&fakeConfig{jobs: []domain.Job{{Name: "daily", Mode: domain.ModeMirror, Paths: []string{"/etc"}}}},
 		h.tape(), h.codec, h.cat, h.fs,
-		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
+		testutil.HashFunc(func(r io.Reader) (string, string, error) { return "h", "", nil }),
 		testutil.FixedRand("run-2"), testutil.FixedClock(fixedTime),
 		h.prog, testutil.NoopLogger(), nil, "test-version")
 

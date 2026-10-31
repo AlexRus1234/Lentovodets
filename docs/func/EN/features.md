@@ -124,7 +124,8 @@ Three modes (see [cli.md](cli.md) for the CLI syntax):
 
 Common properties:
 
-- xxhash64 is verified on every restore; a file counts as read only
+- A checksum is verified on every restore (sha256 on new tapes,
+  xxhash64 on those written before the field); a file counts as read only
   when its hash matches.
 - `--dest` — restore into a safe directory (index paths are relocated
   under it, volume names like `C:` are stripped); `--original` — to the
@@ -144,7 +145,8 @@ metadata for all cartridges, sessions, and files:
 - cartridges: UUID, name, format time;
 - sessions: number on the cartridge, type (FULL/INC), time, run
   identifier;
-- files: path, size, mtime, directory flag, xxhash64, state
+- files: path, size, mtime, directory flag, xxhash64 (+ sha256 on new
+  tapes), state
   (`A`/`M`/`D`).
 
 Operations (CLI `catalog …`, REST `/api/catalog/…`, Web UI):

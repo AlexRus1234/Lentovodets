@@ -26,8 +26,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
-
 	"lentovodec/internal/domain"
 	"lentovodec/internal/port"
 )
@@ -47,8 +45,9 @@ type SessionIndex struct {
 	// IndexSHA256 — hex sha256 канонической формы индекса
 	// (docs/FORMAT.md §5.2); пусто у лент, записанных до поля.
 	IndexSHA256 string `json:"index_sha256,omitempty"`
-	// HashAlgo — правило канонической формы: "sha256-canon2" у новых
-	// лент, "sha256-canon1" у записанных до снапшота конфигурации.
+	// HashAlgo — правило канонической формы: "sha256-canon3" у новых
+	// лент; "sha256-canon2" (до per-file sha256) и "sha256-canon1"
+	// (до снапшота) — у записанных раньше.
 	HashAlgo string `json:"hash_algo,omitempty"`
 
 	// Снапшот конфигурации задания (docs/FORMAT.md §5): resolved
@@ -256,7 +255,7 @@ func copyFileToTar(
 	if err != nil {
 		return fmt.Errorf("tapeformat: открытие %q: %w", fm.Path, err)
 	}
-	digest := xxhash.New()
+	digest := newContentDigest(fm)
 	copyErr := copyFromReader(ctx, src, io.MultiWriter(tw, digest), buf, prog, processed, total, fm.Path)
 	closeErr := src.Close()
 	if copyErr != nil {
@@ -265,10 +264,10 @@ func copyFileToTar(
 	if closeErr != nil {
 		return fmt.Errorf("tapeformat: закрытие %q: %w", fm.Path, closeErr)
 	}
-	if got := hashHex(digest.Sum64()); got != fm.Hash {
+	if got, want := digest.result(); got != want {
 		return fmt.Errorf(
 			"tapeformat: файл %q изменился между сканом и записью: хеш индекса %q, фактический %s",
-			fm.Path, fm.Hash, got)
+			fm.Path, want, got)
 	}
 	return nil
 }

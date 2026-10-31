@@ -21,7 +21,7 @@ package testutil
 import "io"
 
 // HashFunc адаптирует функцию под port.Hasher.
-type HashFunc func(r io.Reader) (string, error)
+type HashFunc func(r io.Reader) (hash, sha256 string, err error)
 
 // Hash вызывает обёрнутую функцию.
-func (f HashFunc) Hash(r io.Reader) (string, error) { return f(r) }
+func (f HashFunc) Hash(r io.Reader) (string, string, error) { return f(r) }

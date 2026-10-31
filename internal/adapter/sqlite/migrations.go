@@ -65,6 +65,7 @@ func schemaStatements() []string {
 			mod_time   INTEGER NOT NULL,
 			is_dir     BOOLEAN NOT NULL,
 			hash       TEXT NOT NULL,
+			sha256     TEXT NOT NULL DEFAULT '',
 			state      TEXT NOT NULL CHECK (state IN ('A', 'M', 'D')),
 			type       TEXT NOT NULL DEFAULT 'reg',
 			linkname   TEXT NOT NULL DEFAULT '',
@@ -109,6 +110,7 @@ func migrationList() []func(tx *sql.Tx) error {
 	return []func(tx *sql.Tx) error{
 		migrateV1,
 		migrateV2,
+		migrateV3,
 	}
 }
 
@@ -149,6 +151,22 @@ func migrateV2(tx *sql.Tx) error {
 		if _, err := tx.Exec(col.ddl); err != nil {
 			return fmt.Errorf("sqlite: ALTER files ADD %s: %w", col.name, err)
 		}
+	}
+	return nil
+}
+
+// migrateV3 adds the per-file sha256 column (ишью №4): hex sha256 для
+// новых сессий, пустая строка у записанных до поля — те проверяются по
+// xxhash64, как раньше. Аддитивно, как migrateV2.
+func migrateV3(tx *sql.Tx) error {
+	if !tableExists(tx, "files") {
+		return nil // свежая БД: таблицы создаст applySchema
+	}
+	if columnExists(tx, "files", "sha256") {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("sqlite: ALTER files ADD sha256: %w", err)
 	}
 	return nil
 }

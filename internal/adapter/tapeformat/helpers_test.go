@@ -18,6 +18,8 @@ package tapeformat_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -69,9 +71,9 @@ func buildFixture(t *testing.T) (*testutil.MapFS, tapeformat.SessionIndex) {
 		Files: []domain.FileMeta{
 			{Path: fixDirPath, ModTime: fixModTimeDir, IsDir: true, State: domain.StateAdded},
 			{Path: fixMoviePath, Size: int64(len(fixMovieContent)), ModTime: fixModTimeMovie,
-				Hash: hashOf(fixMovieContent), State: domain.StateAdded},
+				Hash: hashOf(fixMovieContent), SHA256: sha256Of(fixMovieContent), State: domain.StateAdded},
 			{Path: fixNotesPath, Size: int64(len(fixNotesContent)), ModTime: fixModTimeNotes,
-				Hash: hashOf(fixNotesContent), State: domain.StateModified},
+				Hash: hashOf(fixNotesContent), SHA256: sha256Of(fixNotesContent), State: domain.StateModified},
 			{Path: fixTombstonePath, IsDir: false, State: domain.StateDeleted},
 		},
 	}
@@ -103,6 +105,12 @@ func singleFileFixture(path, content string) (map[string]string, tapeformat.Sess
 // hashOf — канонический xxhash64 файла в hex (как в индексе).
 func hashOf(content string) string {
 	return fmt.Sprintf("%016x", xxhash.Sum64String(content))
+}
+
+// sha256Of — канонический sha256 файла в hex (поле SHA256, ишью №4).
+func sha256Of(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 // writeFixtureSession пишет сессию на ленту без прогресса.

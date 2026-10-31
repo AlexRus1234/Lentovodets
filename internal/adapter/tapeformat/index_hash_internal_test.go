@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"lentovodec/internal/domain"
@@ -43,6 +44,7 @@ func fixtureIndex() SessionIndex {
 			Size:     42,
 			ModTime:  1700000001,
 			Hash:     "0123456789abcdef",
+			SHA256:   strings.Repeat("ab", 32),
 			State:    domain.StateModified,
 			Type:     domain.FileTypeSymlink,
 			Linkname: "/data/b.mkv",
@@ -73,6 +75,7 @@ func TestIndexDigest_CoversFields(t *testing.T) {
 		"mod_time":  func(i *SessionIndex) { i.Files[0].ModTime++ },
 		"is_dir":    func(i *SessionIndex) { i.Files[0].IsDir = true },
 		"hash":      func(i *SessionIndex) { i.Files[0].Hash += "0" },
+		"sha256":    func(i *SessionIndex) { i.Files[0].SHA256 += "0" },
 		"state":     func(i *SessionIndex) { i.Files[0].State = domain.StateAdded },
 		"file_type": func(i *SessionIndex) { i.Files[0].Type = domain.FileTypeHardlink },
 		"linkname":  func(i *SessionIndex) { i.Files[0].Linkname += "x" },
@@ -153,9 +156,9 @@ func TestVerifyIndexHash_Canon1StillVerified(t *testing.T) {
 	}
 }
 
-// TestVerifyIndexHash_Canon2CoversSnapshot — порча любого
-// снапшот-поля canon2-индекса обнаруживается.
-func TestVerifyIndexHash_Canon2CoversSnapshot(t *testing.T) {
+// TestVerifyIndexHash_Canon3CoversSnapshotAndSha256 — порча любого
+// снапшот-поля и per-file sha256 canon3-индекса обнаруживается.
+func TestVerifyIndexHash_Canon3CoversSnapshotAndSha256(t *testing.T) {
 	base := fixtureIndex()
 	base.ToolVersion = "1.1.0"
 	base.ConfigSource = "/etc/lentovodec.toml"
@@ -172,6 +175,7 @@ func TestVerifyIndexHash_Canon2CoversSnapshot(t *testing.T) {
 		"job_config_hash": func(i *SessionIndex) { i.JobConfigHash += "0" },
 		"job_config_body": func(i *SessionIndex) { i.JobConfig.Exclude[0] += "x" },
 		"job_config_drop": func(i *SessionIndex) { i.JobConfig = nil },
+		"file_sha256":     func(i *SessionIndex) { i.Files[0].SHA256 += "0" },
 	}
 	for name, mutate := range mutants {
 		idx := base
@@ -179,7 +183,7 @@ func TestVerifyIndexHash_Canon2CoversSnapshot(t *testing.T) {
 		idx.JobConfig = snapshotOf(&jobCopy)
 		mutate(&idx)
 		if err := verifyIndexHash(&idx); err == nil {
-			t.Errorf("%s: порча снапшота не обнаружена canon2", name)
+			t.Errorf("%s: порча не обнаружена canon3", name)
 		}
 	}
 	// дедуп-индекс (тело опущено) подписан и проверяется как есть
@@ -188,6 +192,23 @@ func TestVerifyIndexHash_Canon2CoversSnapshot(t *testing.T) {
 	sealIndex(&dedup)
 	if err := verifyIndexHash(&dedup); err != nil {
 		t.Errorf("дедуп-индекс без тела: %v", err)
+	}
+}
+
+// TestVerifyIndexHash_Canon2StillVerified — ленты, подписанные canon2
+// (со снапшотом, до per-file sha256), проверяются по canon2; per-file
+// sha256 в форму canon2 не входит — потому новые индексы и подписываются
+// canon3.
+func TestVerifyIndexHash_Canon2StillVerified(t *testing.T) {
+	base := fixtureIndex()
+	base.HashAlgo = "sha256-canon2"
+	base.IndexSHA256 = indexDigest(&base, "sha256-canon2")
+	if err := verifyIndexHash(&base); err != nil {
+		t.Errorf("canon2-лента: %v, want nil", err)
+	}
+	base.Files[0].SHA256 += "0"
+	if err := verifyIndexHash(&base); err != nil {
+		t.Errorf("canon2 не покрывает per-file sha256 (по правилу), got %v", err)
 	}
 }
 

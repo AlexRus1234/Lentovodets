@@ -44,6 +44,17 @@ implementation decisions (in Russian) —
   restore return an error. Tapes without the field are read as before,
   without verification.
 
+- Per-file SHA-256 (hex, 64 chars) in the index of new tapes and in the
+  catalog (issue #4, FORMAT §7): the scanner computes xxhash64 and
+  sha256 in a single read pass (`port.Hasher.Hash` returns both
+  sums), restore and verify-after-write verify content by SHA-256
+  first; tapes without the field are verified by xxhash64 as before.
+  Verifiable without Lentovodec: `sha256sum` output compares to the
+  field value directly; base64 was rejected (20 bytes/file saved
+  against a conversion step on a rescue machine). The index checksum
+  rule is raised to `sha256-canon3` (canon1/canon2 verified as
+  before); migration `user_version` 2→3 (`files.sha256`).
+
 - Configuration snapshot in the index of every session, including INC
   and spanning parts (FORMAT §5.0.1): `job_config` (the resolved
   `domain.Job` after layer merging, no secrets), `job_config_hash`,
