@@ -54,7 +54,7 @@ func fixtureIndex() SessionIndex {
 // каноническую форму, служебные index_sha256/hash_algo — нет.
 func TestIndexDigest_CoversFields(t *testing.T) {
 	base := fixtureIndex()
-	want := indexDigest(&base)
+	want := indexDigest(&base, IndexHashAlgo)
 
 	mutants := map[string]func(*SessionIndex){
 		"format_version": func(i *SessionIndex) { i.FormatVersion-- },
@@ -81,7 +81,7 @@ func TestIndexDigest_CoversFields(t *testing.T) {
 		idx := base
 		idx.Files = append([]domain.FileMeta(nil), base.Files...)
 		mutate(&idx)
-		if got := indexDigest(&idx); got == want {
+		if got := indexDigest(&idx, IndexHashAlgo); got == want {
 			t.Errorf("%s: каноническая форма не изменилась", name)
 		}
 	}
@@ -95,7 +95,7 @@ func TestIndexDigest_CoversFields(t *testing.T) {
 	if sealed.IndexSHA256 != want {
 		t.Errorf("IndexSHA256 = %q, want %q", sealed.IndexSHA256, want)
 	}
-	if got := indexDigest(&sealed); got != want {
+	if got := indexDigest(&sealed, IndexHashAlgo); got != want {
 		t.Error("index_sha256/hash_algo попали в собственную каноническую форму")
 	}
 }
@@ -132,6 +132,62 @@ func TestVerifyIndexHash(t *testing.T) {
 	}
 	if corrupt.Recorded != sealed.IndexSHA256 || corrupt.Computed == "" {
 		t.Errorf("суммы в ошибке = %+v", corrupt)
+	}
+}
+
+// TestVerifyIndexHash_Canon1StillVerified — лента, подписанная canon1
+// (записана до снапшота), проверяется по canon1: снапшотные поля в её
+// форму не входят, порча снапшота canon1-лентой не ловится — потому
+// новые индексы и подписываются canon2.
+func TestVerifyIndexHash_Canon1StillVerified(t *testing.T) {
+	legacy := fixtureIndex()
+	legacy.HashAlgo = "sha256-canon1"
+	legacy.IndexSHA256 = indexDigest(&legacy, "sha256-canon1")
+	if err := verifyIndexHash(&legacy); err != nil {
+		t.Errorf("canon1-лента: %v, want nil", err)
+	}
+	legacy.JobConfig = &JobSnapshot{Name: "подмена"}
+	legacy.JobConfigHash = "00"
+	if err := verifyIndexHash(&legacy); err != nil {
+		t.Errorf("canon1 не покрывает снапшот (по правилу), got %v", err)
+	}
+}
+
+// TestVerifyIndexHash_Canon2CoversSnapshot — порча любого
+// снапшот-поля canon2-индекса обнаруживается.
+func TestVerifyIndexHash_Canon2CoversSnapshot(t *testing.T) {
+	base := fixtureIndex()
+	base.ToolVersion = "1.1.0"
+	base.ConfigSource = "/etc/lentovodec.toml"
+	base.ConfigMTime = 1699990000
+	base.JobConfigHash = domain.JobConfigHash(domain.Job{Name: "media", Mode: domain.ModeMirror, Paths: []string{"/tank"}})
+	job := domain.Job{Name: "media", Mode: domain.ModeMirror, Paths: []string{"/tank"}, Exclude: []string{"*.tmp"}}
+	base.JobConfig = snapshotOf(&job)
+	sealIndex(&base)
+
+	mutants := map[string]func(*SessionIndex){
+		"tool_version":    func(i *SessionIndex) { i.ToolVersion += "x" },
+		"config_source":   func(i *SessionIndex) { i.ConfigSource += "x" },
+		"config_mtime":    func(i *SessionIndex) { i.ConfigMTime++ },
+		"job_config_hash": func(i *SessionIndex) { i.JobConfigHash += "0" },
+		"job_config_body": func(i *SessionIndex) { i.JobConfig.Exclude[0] += "x" },
+		"job_config_drop": func(i *SessionIndex) { i.JobConfig = nil },
+	}
+	for name, mutate := range mutants {
+		idx := base
+		jobCopy := job
+		idx.JobConfig = snapshotOf(&jobCopy)
+		mutate(&idx)
+		if err := verifyIndexHash(&idx); err == nil {
+			t.Errorf("%s: порча снапшота не обнаружена canon2", name)
+		}
+	}
+	// дедуп-индекс (тело опущено) подписан и проверяется как есть
+	dedup := base
+	dedup.JobConfig = nil
+	sealIndex(&dedup)
+	if err := verifyIndexHash(&dedup); err != nil {
+		t.Errorf("дедуп-индекс без тела: %v", err)
 	}
 }
 

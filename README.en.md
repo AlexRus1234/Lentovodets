@@ -134,6 +134,11 @@ assistant was used while preparing the source code.[^1]
 - `tape inspect <device>` — cartridge inventory without a config or the
   catalog: the label and all session indexes (DR path, FORMAT §12);
   `--json` for scripts
+- Configuration snapshot in every session index: `job_config` (the
+  resolved job after layer merging), `tool_version` and the
+  configuration source; the body is not duplicated — an unchanged
+  configuration is represented by the `job_config_hash` hash
+  (FORMAT §5.0.1)
 - Smart restore relies on the catalog and survives physical corruption
   of an individual file copy
 

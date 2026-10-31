@@ -24,8 +24,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +35,7 @@ import (
 
 	"lentovodec/internal/adapter/sloglog"
 	"lentovodec/internal/domain"
+	"lentovodec/internal/port"
 	"lentovodec/internal/usecase/inspect"
 )
 
@@ -86,18 +89,33 @@ func newTapeInspectCmd(deps Deps) *cobra.Command {
 	return cmd
 }
 
+// inspectJobJSON — wire-вид снапшота задания (docs/FORMAT.md §5).
+type inspectJobJSON struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Mode        string   `json:"mode"`
+	Paths       []string `json:"paths"`
+	Exclude     []string `json:"exclude,omitempty"`
+	SpanDepth   int32    `json:"span_depth,omitempty"`
+}
+
 // inspectSessionJSON — wire-вид сессии для --json.
 type inspectSessionJSON struct {
-	SessionNum int32              `json:"session_num"`
-	Type       domain.SessionType `json:"type"`
-	JobRunID   string             `json:"job_run_id"`
-	Timestamp  int64              `json:"timestamp"`
-	JobName    string             `json:"job_name,omitempty"`
-	Part       int32              `json:"part,omitempty"`
-	Continues  string             `json:"continues,omitempty"`
-	FileCount  int                `json:"files"`
-	Bytes      int64              `json:"bytes"`
-	Entries    []domain.FileMeta  `json:"entries,omitempty"`
+	SessionNum    int32              `json:"session_num"`
+	Type          domain.SessionType `json:"type"`
+	JobRunID      string             `json:"job_run_id"`
+	Timestamp     int64              `json:"timestamp"`
+	JobName       string             `json:"job_name,omitempty"`
+	Part          int32              `json:"part,omitempty"`
+	Continues     string             `json:"continues,omitempty"`
+	ToolVersion   string             `json:"tool_version,omitempty"`
+	ConfigSource  string             `json:"config_source,omitempty"`
+	ConfigMTime   int64              `json:"config_mtime,omitempty"`
+	JobConfigHash string             `json:"job_config_hash,omitempty"`
+	JobConfig     *inspectJobJSON    `json:"job_config,omitempty"`
+	FileCount     int                `json:"files"`
+	Bytes         int64              `json:"bytes"`
+	Entries       []domain.FileMeta  `json:"entries,omitempty"`
 }
 
 // inspectJSON — wire-вид отчёта: выбранные разделы.
@@ -119,15 +137,20 @@ func printInspectJSON(deps Deps, rep inspect.Report, showLabel, showSessions, sh
 		sessions := make([]inspectSessionJSON, 0, len(rep.Sessions))
 		for _, s := range rep.Sessions {
 			sj := inspectSessionJSON{
-				SessionNum: s.Header.SessionNum,
-				Type:       s.Header.Type,
-				JobRunID:   s.Header.JobRunID,
-				Timestamp:  s.Header.Timestamp,
-				JobName:    s.Header.JobName,
-				Part:       s.Header.Part,
-				Continues:  s.Header.Continues,
-				FileCount:  len(s.Files),
-				Bytes:      s.Bytes,
+				SessionNum:    s.Header.SessionNum,
+				Type:          s.Header.Type,
+				JobRunID:      s.Header.JobRunID,
+				Timestamp:     s.Header.Timestamp,
+				JobName:       s.Header.JobName,
+				Part:          s.Header.Part,
+				Continues:     s.Header.Continues,
+				ToolVersion:   s.Header.ToolVersion,
+				ConfigSource:  s.Header.ConfigSource,
+				ConfigMTime:   s.Header.ConfigMTime,
+				JobConfigHash: s.Header.JobConfigHash,
+				JobConfig:     inspectJobOf(s.Header.JobConfig),
+				FileCount:     len(s.Files),
+				Bytes:         s.Bytes,
 			}
 			if showFiles {
 				sj.Entries = s.Files
@@ -167,6 +190,7 @@ func printInspectText(deps Deps, rep inspect.Report, showLabel, showSessions, sh
 			}
 			line += fmt.Sprintf("  файлов %d  %s", len(s.Files), humanSize(s.Bytes))
 			fmt.Fprintln(w, line)
+			printSnapshotLines(w, s.Header)
 			if !showFiles {
 				continue
 			}
@@ -177,6 +201,57 @@ func printInspectText(deps Deps, rep inspect.Report, showLabel, showSessions, sh
 	}
 	if rep.NextTapeName != "" {
 		fmt.Fprintf(deps.Stdout, "цепочка продолжается: следующая кассета %s\n", rep.NextTapeName)
+	}
+}
+
+// inspectJobOf переводит доменный снапшот в wire-вид --json; nil → nil.
+func inspectJobOf(job *domain.Job) *inspectJobJSON {
+	if job == nil {
+		return nil
+	}
+	return &inspectJobJSON{
+		Name:        job.Name,
+		Description: job.Description,
+		Mode:        string(job.Mode),
+		Paths:       job.Paths,
+		Exclude:     job.Exclude,
+		SpanDepth:   job.SpanDepth,
+	}
+}
+
+// printSnapshotLines — снапшот конфигурации под строкой сессии
+// (docs/FORMAT.md §5): хеш пишется каждой новой сессией, тело — только
+// когда оно записано (первая сессия кассеты или изменение конфигурации;
+// nil — «не изменилось, см. предыдущую сессию с тем же хешем»).
+// Отсутствие хеша — лента записана до снапшота: конфигурация неизвестна.
+func printSnapshotLines(w io.Writer, h port.SessionHeader) {
+	if h.JobConfigHash == "" {
+		return
+	}
+	cfg := "  конфиг   sha256 " + h.JobConfigHash
+	if h.ToolVersion != "" {
+		cfg += "  версия " + h.ToolVersion
+	}
+	if h.ConfigSource != "" {
+		cfg += "  источник " + h.ConfigSource
+		if h.ConfigMTime != 0 {
+			cfg += " (" + time.Unix(h.ConfigMTime, 0).UTC().Format(time.RFC3339) + ")"
+		}
+	}
+	fmt.Fprintln(w, cfg)
+	if jc := h.JobConfig; jc != nil {
+		job := fmt.Sprintf("  задание  %s  режим %s", jc.Name, jc.Mode)
+		if jc.SpanDepth > 0 {
+			job += fmt.Sprintf("  span_depth %d", jc.SpanDepth)
+		}
+		job += "\n           пути " + strings.Join(jc.Paths, ", ")
+		if len(jc.Exclude) > 0 {
+			job += "\n           exclude " + strings.Join(jc.Exclude, ", ")
+		}
+		if jc.Description != "" {
+			job += "\n           " + jc.Description
+		}
+		fmt.Fprintln(w, job)
 	}
 }
 

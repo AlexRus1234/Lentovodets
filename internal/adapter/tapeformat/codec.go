@@ -61,6 +61,11 @@ func (Codec) WriteSession(
 		JobName:       header.JobName,
 		Part:          header.Part,
 		Continues:     header.Continues,
+		ToolVersion:   header.ToolVersion,
+		ConfigSource:  header.ConfigSource,
+		ConfigMTime:   header.ConfigMTime,
+		JobConfigHash: header.JobConfigHash,
+		JobConfig:     snapshotOf(header.JobConfig),
 		Files:         files,
 	}, fs, prog)
 }

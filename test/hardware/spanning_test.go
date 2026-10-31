@@ -206,7 +206,7 @@ func TestHardware_SpanningTwoTapes(t *testing.T) {
 	}
 
 	t.Log("backup (spanning, две части)...")
-	res, err := backup.New(cfg, tp, codec, cat, fsys, hasher, rnd, clock, nil, testutil.NoopLogger(), backupChanger).
+	res, err := backup.New(cfg, tp, codec, cat, fsys, hasher, rnd, clock, nil, testutil.NoopLogger(), backupChanger, "").
 		Backup(ctx, "hw", backup.Options{})
 	if err != nil {
 		t.Fatalf("backup: %v", err)

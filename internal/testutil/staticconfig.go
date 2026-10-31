@@ -21,7 +21,11 @@
 
 package testutil
 
-import "lentovodec/internal/domain"
+import (
+	"time"
+
+	"lentovodec/internal/domain"
+)
 
 // StaticConfig отдаёт предзагруженные задания.
 type StaticConfig struct {
@@ -56,3 +60,7 @@ func (c *StaticConfig) Capacity() (int64, error) { return c.CapacityBytes, nil }
 
 // MinTail — порог остатка кассеты (0 — дефолт планировщика).
 func (c *StaticConfig) MinTail() (int64, error) { return c.MinTailBytes, nil }
+
+// Source — источник конфигурации: двойник собирается из памяти,
+// файла нет (нули — как у port.ConfigSource без TOML-файла).
+func (c *StaticConfig) Source() (string, time.Time) { return "", time.Time{} }

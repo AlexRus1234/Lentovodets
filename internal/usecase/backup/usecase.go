@@ -94,11 +94,14 @@ type UseCase struct {
 	prog    port.ProgressReporter // nil допустим
 	log     *slog.Logger
 	changer port.TapeChanger // nil — смена кассет недоступна
+	version string           // версия бинарного файла для снапшота (tool_version)
 }
 
 // New собирает use case (wire в iface/cli). changer может быть nil:
 // тогда планировщик, давший больше одной части, завершает запуск
-// ошибкой *domain.TapeChangerError до записи.
+// ошибкой *domain.TapeChangerError до записи. version — версия
+// бинарного файла (ldflags), попадает в снапшот конфигурации каждой
+// сессии; пустая строка допустима (dev-сборка без -X).
 func New(
 	cfg port.ConfigSource,
 	tape port.Tape,
@@ -111,11 +114,12 @@ func New(
 	prog port.ProgressReporter,
 	log *slog.Logger,
 	changer port.TapeChanger,
+	version string,
 ) *UseCase {
 	return &UseCase{
 		cfg: cfg, tape: tape, codec: codec, cat: cat,
 		fs: fs, hasher: hasher, rand: rand, clock: clock,
-		prog: prog, log: log, changer: changer,
+		prog: prog, log: log, changer: changer, version: version,
 	}
 }
 
@@ -397,6 +401,7 @@ func (uc *UseCase) writePart(
 		Part:       sess.Part,
 		Continues:  continues,
 	}
+	uc.fillSnapshot(ctx, tape, job, lastNum, &header)
 	writeErr := uc.codec.WriteSession(ctx, tape, header, files, uc.fs, tracker)
 	if writeErr == nil && cont != nil {
 		writeErr = uc.codec.WriteContinuation(ctx, tape, *cont)
@@ -411,6 +416,89 @@ func (uc *UseCase) writePart(
 		}
 		writeErr = errors.Join(writeErr, uc.restoreEOD(ctx, tape, lastNum))
 		return mapTapeFull(writeErr, tracker.written)
+	}
+	return nil
+}
+
+// fillSnapshot дополняет заголовок сессии полями снапшота конфигурации
+// (docs/FORMAT.md §5): resolved задание, версия инструмента и источник
+// конфигурации на момент записи. Дедуп: предыдущая сессия этой кассеты
+// несёт тот же job_config_hash — тело не пишется; полное тело — в
+// первой сессии кассеты (lastNum = 0), при изменении конфигурации и
+// когда прошлый индекс нечитаем (старая лента, сбой чтения): дедуп
+// best-effort, на запись он не влияет.
+func (uc *UseCase) fillSnapshot(
+	ctx context.Context,
+	tape port.Tape,
+	job domain.Job,
+	lastNum int32,
+	header *port.SessionHeader,
+) {
+	jobHash := domain.JobConfigHash(job)
+	dedup := false
+	if lastNum > 0 {
+		prev, err := uc.prevJobConfigHash(ctx, tape, lastNum)
+		if err != nil {
+			uc.log.Warn("снапшот: индекс предыдущей сессии не прочитан, пишется полное тело",
+				slog.Int("session_num", int(lastNum)),
+				slog.String("error", err.Error()))
+		} else {
+			dedup = prev == jobHash
+		}
+	}
+	header.JobConfigHash = jobHash
+	header.ToolVersion = uc.version
+	srcPath, srcMTime := uc.cfg.Source()
+	header.ConfigSource = srcPath
+	if !srcMTime.IsZero() {
+		header.ConfigMTime = srcMTime.Unix()
+	}
+	if !dedup {
+		header.JobConfig = &job
+	}
+}
+
+// prevJobConfigHash читает job_config_hash предыдущей сессии кассеты
+// (lastNum): от позиции записи (за filemark'ом tar предыдущей сессии,
+// m(2K+1)) три filemark'а назад — на индекс последней сессии
+// (docs/FORMAT.md §9; MTBSFM(1) у позиции «сразу за меткой» — no-op,
+// поэтому три, а не две), чтение индекса, возврат вперёд за filemark
+// её tar-сегмента. Короткий seek назад вместо полного прохода ленты.
+// Сбой любой стадии восстанавливает позицию записи от якоря BOT
+// (MTFSF(2K+1), инвариант FORMAT §3): позиция после недочитанного
+// индекса неизвестна, а писать обязаны ровно туда, куда позиционировал
+// writePart. Сбой восстановления присоединяется — лента ненадёжна.
+func (uc *UseCase) prevJobConfigHash(ctx context.Context, tape port.Tape, lastNum int32) (string, error) {
+	hash, danceErr := func() (string, error) {
+		if err := tape.BackwardFilemarks(ctx, 3); err != nil {
+			return "", fmt.Errorf("backup: откат к индексу сессии %d: %w", lastNum, err)
+		}
+		header, _, err := uc.codec.ReadIndexFiles(ctx, tape)
+		if err != nil {
+			return "", fmt.Errorf("backup: чтение индекса сессии %d: %w", lastNum, err)
+		}
+		if err := tape.ForwardFilemarks(ctx, 1); err != nil {
+			return "", fmt.Errorf("backup: возврат к позиции записи: %w", err)
+		}
+		return header.JobConfigHash, nil
+	}()
+	if danceErr == nil {
+		return hash, nil
+	}
+	if seekErr := uc.seekWritePosition(ctx, tape, lastNum); seekErr != nil {
+		return "", errors.Join(danceErr, seekErr)
+	}
+	return "", danceErr
+}
+
+// seekWritePosition ставит ленту на позицию записи сессии lastNum+1:
+// Rewind + MTFSF(2*lastNum+1) от якоря BOT.
+func (uc *UseCase) seekWritePosition(ctx context.Context, tape port.Tape, lastNum int32) error {
+	if err := tape.Rewind(ctx); err != nil {
+		return fmt.Errorf("backup: перемотка: %w", err)
+	}
+	if err := tape.ForwardFilemarks(ctx, int(2*lastNum+1)); err != nil {
+		return fmt.Errorf("backup: позиционирование MTFSF(%d): %w", 2*lastNum+1, err)
 	}
 	return nil
 }

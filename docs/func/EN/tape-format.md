@@ -182,6 +182,26 @@ minutes. Permissions (they live in tar headers), schedules, retention
 and library parameters are deliberately absent from the tape — they are
 config and catalog policy, not media content (FORMAT §12).
 
+Sessions written by versions with the configuration snapshot
+(FORMAT §5.0.1) show it under the session line: the canonical
+configuration hash, the Lentovodec version and the configuration
+source; in the first session of a cartridge and after a configuration
+change — the full body as well (mode, paths, exclude, span_depth).
+An unchanged configuration is represented by the hash alone: the body
+is not duplicated on the cartridge. Tapes written before the snapshot
+read as before — their session lines carry no snapshot fields
+("configuration unknown"). The same data is available in `--json` via
+the `tool_version`, `config_source`, `config_mtime`, `job_config_hash`
+and `job_config` fields.
+
+```
+session 1  FULL  job media  2026-10-31T07:00:00Z  files 12  4.2 GiB
+  config   sha256 5f2b0d…c81d  version 1.1.0  source /etc/lentovodec.toml (2026-10-28T09:12:00Z)
+  job      media  mode mirror  span_depth 2
+           paths /tank/media, /tank/docs
+           exclude *.tmp
+```
+
 ## Versioning and compatibility
 
 - Any format change bumps `format_version` in the label.

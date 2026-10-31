@@ -30,21 +30,39 @@ import (
 	"lentovodec/internal/domain"
 )
 
-// IndexHashAlgo — идентификатор правила канонической формы индекса.
-const IndexHashAlgo = "sha256-canon1"
+const (
+	// IndexHashAlgo — правило, которым sealIndex подписывает новые
+	// индексы: canon2 покрывает поля снапшота конфигурации задания.
+	IndexHashAlgo = "sha256-canon2"
 
-// canonicalPrefix — доменное разделение правила: хеш другого объекта с
-// теми же полями не совпадёт с индексным.
-const canonicalPrefix = "lentovodec.index.canon1\n"
+	// indexHashAlgoCanon1 — правило лент, записанных до снапшота
+	// (4a835af): снапшотные поля в canon1 не входят, проверка старых
+	// лент идёт по нему и дальше.
+	indexHashAlgoCanon1 = "sha256-canon1"
+)
 
-// canonicalIndex возвращает каноническую форму индекса: поля в
-// фиксированном порядке, каждое — длина (uint64 big-endian) + байты.
-// Длина вместо разделителей снимает вопрос экранирования: имя файла на
-// Linux может содержать любые байты, кроме NUL и '/'.
-// Числа — десятичный ASCII, bool — "0"/"1", пустая строка — длина 0.
-func canonicalIndex(idx *SessionIndex) []byte {
+// canonicalPrefix — доменное разделение правила по версии: хеш
+// другого объекта с теми же полями не совпадёт с индексным.
+const (
+	canonicalPrefixV2 = "lentovodec.index.canon2\n"
+	canonicalPrefixV1 = "lentovodec.index.canon1\n"
+)
+
+// canonicalIndex возвращает каноническую форму индекса по правилу
+// algo: поля в фиксированном порядке, каждое — длина (uint64
+// big-endian) + байты. Длина вместо разделителей снимает вопрос
+// экранирования: имя файла на Linux может содержать любые байты,
+// кроме NUL и '/'. Числа — десятичный ASCII, bool — "0"/"1", пустая
+// строка — длина 0. canon2 добавляет после continues поля снапшота
+// конфигурации (docs/FORMAT.md §5.2); canon1 — форма лент до
+// снапшота, снапшотные поля в неё не входят.
+func canonicalIndex(idx *SessionIndex, algo string) []byte {
 	var buf bytes.Buffer
-	buf.WriteString(canonicalPrefix)
+	if algo == indexHashAlgoCanon1 {
+		buf.WriteString(canonicalPrefixV1)
+	} else {
+		buf.WriteString(canonicalPrefixV2)
+	}
 	writeField := func(s string) {
 		var n [8]byte
 		binary.BigEndian.PutUint64(n[:], uint64(len(s)))
@@ -59,6 +77,13 @@ func canonicalIndex(idx *SessionIndex) []byte {
 	writeField(idx.JobName)
 	writeField(strconv.FormatInt(int64(idx.Part), 10))
 	writeField(idx.Continues)
+	if algo != indexHashAlgoCanon1 {
+		writeField(idx.ToolVersion)
+		writeField(idx.ConfigSource)
+		writeField(strconv.FormatInt(idx.ConfigMTime, 10))
+		writeField(idx.JobConfigHash)
+		writeField(string(jobConfigField(idx.JobConfig)))
+	}
 	writeField(strconv.Itoa(len(idx.Files)))
 	for i := range idx.Files {
 		fm := &idx.Files[i]
@@ -83,28 +108,45 @@ func boolField(v bool) string {
 	return "0"
 }
 
-// indexDigest — hex sha256 канонической формы индекса.
-func indexDigest(idx *SessionIndex) string {
-	sum := sha256.Sum256(canonicalIndex(idx))
+// jobConfigField — канонические байты тела снапшота одним полем
+// canon2-формы: sha256 этого поля равен job_config_hash, а целостность
+// тела покрывается index_sha256 вместе со всем индексом. nil-снапшот
+// (дедуп, старая лента) — пустое поле длины 0.
+func jobConfigField(s *JobSnapshot) []byte {
+	if s == nil {
+		return nil
+	}
+	return domain.CanonicalJobConfig(*s.job())
+}
+
+// indexDigest — hex sha256 канонической формы индекса по правилу algo.
+func indexDigest(idx *SessionIndex, algo string) string {
+	sum := sha256.Sum256(canonicalIndex(idx, algo))
 	return hex.EncodeToString(sum[:])
 }
 
 // sealIndex проставляет правило и контрольную сумму перед записью.
 func sealIndex(idx *SessionIndex) {
 	idx.HashAlgo = IndexHashAlgo
-	idx.IndexSHA256 = indexDigest(idx)
+	idx.IndexSHA256 = indexDigest(idx, IndexHashAlgo)
 }
 
 // verifyIndexHash проверяет контрольную сумму разобранного индекса до
-// нормализации и использования полей. Отсутствие поля — лента записана до
-// появления КС: проверка не выполняется. Неизвестное правило — индекс
+// нормализации и использования полей. Отсутствие поля — лента записана
+// до появления КС: проверка не выполняется. Незнакомое правило — индекс
 // записан более новым бинарём: проверить нечем, чтение не блокируется
-// (DR важнее обнаружения подмены; см. docs/FORMAT.md §5.2).
+// (DR важнее обнаружения подмены; см. docs/FORMAT.md §5.2). canon1
+// проверяется по canon1: ленты, записанные до снапшота, — как раньше.
 func verifyIndexHash(idx *SessionIndex) error {
-	if idx.IndexSHA256 == "" || idx.HashAlgo != IndexHashAlgo {
+	if idx.IndexSHA256 == "" {
 		return nil
 	}
-	if got := indexDigest(idx); got != idx.IndexSHA256 {
+	switch idx.HashAlgo {
+	case IndexHashAlgo, indexHashAlgoCanon1:
+	default:
+		return nil
+	}
+	if got := indexDigest(idx, idx.HashAlgo); got != idx.IndexSHA256 {
 		return &domain.IndexCorruptError{
 			SessionNum: idx.SessionNum,
 			Algo:       idx.HashAlgo,

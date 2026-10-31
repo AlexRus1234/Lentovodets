@@ -63,7 +63,7 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		defer changer.finish() // финальная кассета цепочки; промежуточные закрывает changer
 		uc := backup.New(s.deps.Config, tape, s.deps.Codec, s.deps.Catalog,
 			s.deps.FS, s.deps.Hasher, s.deps.Rand, s.deps.Clock,
-			NewDeferredTaskProgress(task, s.deps.Clock), s.deps.Log, changer)
+			NewDeferredTaskProgress(task, s.deps.Clock), s.deps.Log, changer, s.deps.Version)
 		result, err := uc.Backup(s.ctx, jobName, backup.Options{Full: full, Verify: verify})
 		if err == nil {
 			task.SetResult(jobName, result.Stats.Bytes, result.Stats.Added+result.Stats.Modified, result.Tapes)

@@ -47,9 +47,23 @@ type SessionIndex struct {
 	// IndexSHA256 — hex sha256 канонической формы индекса
 	// (docs/FORMAT.md §5.2); пусто у лент, записанных до поля.
 	IndexSHA256 string `json:"index_sha256,omitempty"`
-	// HashAlgo — правило канонической формы: "sha256-canon1".
-	HashAlgo string            `json:"hash_algo,omitempty"`
-	Files    []domain.FileMeta `json:"files"`
+	// HashAlgo — правило канонической формы: "sha256-canon2" у новых
+	// лент, "sha256-canon1" у записанных до снапшота конфигурации.
+	HashAlgo string `json:"hash_algo,omitempty"`
+
+	// Снапшот конфигурации задания (docs/FORMAT.md §5): resolved
+	// domain.Job, версия инструмента и источник конфигурации на момент
+	// сессии. Дедуп: при неизменной конфигурации тело (JobConfig) не
+	// пишется — только JobConfigHash; полное тело — в первой сессии
+	// кассеты и при изменении. omitempty: старые бинари поля
+	// игнорируют, старые ленты читаются без снапшота.
+	ToolVersion   string       `json:"tool_version,omitempty"`
+	ConfigSource  string       `json:"config_source,omitempty"`
+	ConfigMTime   int64        `json:"config_mtime,omitempty"` // Unix-секунды
+	JobConfigHash string       `json:"job_config_hash,omitempty"`
+	JobConfig     *JobSnapshot `json:"job_config,omitempty"`
+
+	Files []domain.FileMeta `json:"files"`
 }
 
 // WriteSession пишет одну сессию в текущую позицию ленты:

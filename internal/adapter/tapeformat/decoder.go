@@ -104,13 +104,18 @@ func ReadIndexFiles(ctx context.Context, tape port.Tape) (port.SessionHeader, []
 // headerOf проецирует разобранный индекс в заголовок сессии порта.
 func headerOf(idx *SessionIndex) port.SessionHeader {
 	return port.SessionHeader{
-		SessionNum: idx.SessionNum,
-		Type:       idx.Type,
-		JobRunID:   idx.JobRunID,
-		Timestamp:  idx.Timestamp,
-		JobName:    idx.JobName,
-		Part:       idx.Part,
-		Continues:  idx.Continues,
+		SessionNum:    idx.SessionNum,
+		Type:          idx.Type,
+		JobRunID:      idx.JobRunID,
+		Timestamp:     idx.Timestamp,
+		JobName:       idx.JobName,
+		Part:          idx.Part,
+		Continues:     idx.Continues,
+		ToolVersion:   idx.ToolVersion,
+		ConfigSource:  idx.ConfigSource,
+		ConfigMTime:   idx.ConfigMTime,
+		JobConfigHash: idx.JobConfigHash,
+		JobConfig:     idx.JobConfig.job(),
 	}
 }
 

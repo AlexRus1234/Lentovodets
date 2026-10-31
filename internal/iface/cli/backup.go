@@ -50,7 +50,7 @@ func newBackupCmd(deps Deps, flags *globalFlags) *cobra.Command {
 					job: args[0], nextName: nextTape,
 				}
 				uc := backup.New(rt.cfg, tape, deps.Codec, cat, deps.FS,
-					deps.Hasher, deps.Rand, deps.Clock, nil, rt.logger(), changer)
+					deps.Hasher, deps.Rand, deps.Clock, nil, rt.logger(), changer, deps.Version)
 				res, err := uc.Backup(ctx, args[0], backup.Options{Full: full, DryRun: dryRun, Verify: verify})
 				if err != nil {
 					return err

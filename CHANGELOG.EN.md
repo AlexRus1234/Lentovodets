@@ -44,6 +44,18 @@ implementation decisions (in Russian) —
   restore return an error. Tapes without the field are read as before,
   without verification.
 
+- Configuration snapshot in the index of every session, including INC
+  and spanning parts (FORMAT §5.0.1): `job_config` (the resolved
+  `domain.Job` after layer merging, no secrets), `job_config_hash`,
+  `tool_version`, `config_source`, `config_mtime`. The body is
+  deduplicated per cartridge: an unchanged configuration is the hash
+  alone, the full body is written in the first session of a cartridge
+  and on change. The index checksum rule is raised to `sha256-canon2`
+  (snapshot fields in the canonical form); `sha256-canon1` tapes are
+  verified by the former rule, `FormatVersion` is unchanged.
+  `tape inspect` shows the snapshot (text and `--json`); restore does
+  not depend on it: no fields — "configuration unknown".
+
 ### Changed
 
 - CI: dnf in build-test goes exclusively through Khrazhevnik

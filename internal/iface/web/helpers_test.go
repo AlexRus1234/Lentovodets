@@ -74,6 +74,7 @@ func (c *fakeConfig) WebhookTimeout() time.Duration { return 10 * time.Second }
 func (c *fakeConfig) RawTOML() (string, error)      { return c.tomlText, nil }
 func (c *fakeConfig) Capacity() (int64, error)      { return c.capacity, nil }
 func (c *fakeConfig) MinTail() (int64, error)       { return c.minTail, nil }
+func (c *fakeConfig) Source() (string, time.Time)   { return "", time.Time{} }
 
 func (c *fakeConfig) AddJob(job domain.Job) error {
 	if err := job.Validate(); err != nil {

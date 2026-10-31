@@ -35,6 +35,16 @@ type SessionHeader struct {
 	JobName    string             // имя задания
 	Part       int32              // номер части spanning-цепочки, с 1; 0 = 1 (старые ленты)
 	Continues  string             // UUID предыдущей кассеты цепочки; "" у части 1
+
+	// Снапшот конфигурации задания (docs/FORMAT.md §5): resolved
+	// конфиг на момент сессии. JobConfig — nil при дедупе (тело не
+	// изменилось с предыдущей сессии кассеты, связывает только
+	// JobConfigHash) и у лент, записанных до снапшота.
+	ToolVersion   string      // версия бинарного файла (ldflags); "" — не задана
+	ConfigSource  string      // путь файла конфигурации; "" — файла нет (defaults/env/флаги)
+	ConfigMTime   int64       // Unix-секунды модификации файла конфигурации; 0 — неизвестно
+	JobConfigHash string      // hex sha256 канонической формы domain.Job (domain.JobConfigHash)
+	JobConfig     *domain.Job // полное тело снапшота; nil — дедуп или старая лента
 }
 
 // Continuation — указатель продолжения: блок в конце кассеты,

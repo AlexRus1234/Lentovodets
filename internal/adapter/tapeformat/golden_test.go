@@ -18,6 +18,7 @@ package tapeformat_test
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"testing"
 
 	"lentovodec/internal/adapter/tapeformat"
+	"lentovodec/internal/domain"
 	"lentovodec/internal/testutil"
 )
 
@@ -34,6 +36,93 @@ var update = flag.Bool("update", false, "перезаписать golden-фай�
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
+}
+
+// TestGoldenSessionSnapshot — индекс снапшот-сессии: полный объект
+// job_config со всеми полями, источник конфигурации, версия
+// инструмента; канон canon2. Отдельный golden держит wire-вид
+// снапшота стабильным (docs/FORMAT.md §5).
+func TestGoldenSessionSnapshot(t *testing.T) {
+	fs := testutil.NewMapFS(map[string]string{"/data/a.txt": "a"})
+	idx := tapeformat.SessionIndex{
+		FormatVersion: domain.FormatVersion,
+		SessionNum:    1,
+		Type:          domain.SessionFull,
+		JobRunID:      "0f4c2d6a-1111-4222-8333-444455556666",
+		Timestamp:     1700000000,
+		JobName:       "media",
+		ToolVersion:   "1.1.0",
+		ConfigSource:  "/etc/lentovodec.toml",
+		ConfigMTime:   1699990000,
+		JobConfigHash: domain.JobConfigHash(snapshotFixtureJob()),
+		JobConfig: &tapeformat.JobSnapshot{
+			Name:        "media",
+			Description: "медиатека",
+			Mode:        string(domain.ModeMirror),
+			Paths:       []string{"/tank/media", "/tank/docs"},
+			Exclude:     []string{"*.tmp", "*.bak"},
+			SpanDepth:   2,
+		},
+		Files: []domain.FileMeta{{
+			Path:    "/data/a.txt",
+			Size:    1,
+			ModTime: 1700000001,
+			Hash:    hashOf("a"),
+			State:   domain.StateAdded,
+		}},
+	}
+	tape := testutil.NewFakeTape()
+	writeFixtureSession(t, tape, idx, fs)
+	blocks, _ := tape.Snapshot()
+	checkGolden(t, "index_snapshot.bin", blocks[0])
+}
+
+// snapshotFixtureJob — задание, зеркалящее JobSnapshot золотника.
+func snapshotFixtureJob() domain.Job {
+	return domain.Job{
+		Name:        "media",
+		Description: "медиатека",
+		Mode:        domain.ModeMirror,
+		Paths:       []string{"/tank/media", "/tank/docs"},
+		Exclude:     []string{"*.tmp", "*.bak"},
+		SpanDepth:   2,
+	}
+}
+
+// TestGoldenSessionSnapshotVerified — записанные золотные байты
+// читаются реальным путём (readIndex: parse → verify canon2 → use):
+// снапшот возвращается заголовком сессии целиком.
+func TestGoldenSessionSnapshotVerified(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("golden", "index_snapshot.bin"))
+	if err != nil {
+		t.Fatalf("чтение index_snapshot.bin: %v", err)
+	}
+	ctx := context.Background()
+	tape := testutil.NewFakeTape()
+	if err := tape.WriteBlock(ctx, raw); err != nil {
+		t.Fatalf("WriteBlock: %v", err)
+	}
+	if err := tape.WriteEOF(ctx); err != nil {
+		t.Fatalf("WriteEOF: %v", err)
+	}
+	if err := tape.Rewind(ctx); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	header, err := tapeformat.ReadHeader(ctx, tape)
+	if err != nil {
+		t.Fatalf("ReadHeader золотника: %v", err)
+	}
+	if header.JobConfig == nil || header.JobConfig.Name != "media" {
+		t.Fatalf("снапшот не прочитан: %+v", header.JobConfig)
+	}
+	if header.JobConfigHash != domain.JobConfigHash(snapshotFixtureJob()) {
+		t.Error("job_config_hash не равен хешу канонической формы тела")
+	}
+	if header.ToolVersion != "1.1.0" ||
+		header.ConfigSource != "/etc/lentovodec.toml" ||
+		header.ConfigMTime != 1699990000 {
+		t.Errorf("поля источника: %+v", header)
+	}
 }
 
 func TestGoldenLabel(t *testing.T) {

@@ -19,7 +19,11 @@
 
 package port
 
-import "lentovodec/internal/domain"
+import (
+	"time"
+
+	"lentovodec/internal/domain"
+)
 
 // ConfigSource — чтение конфигурации после слияния слоёв.
 type ConfigSource interface {
@@ -53,6 +57,13 @@ type ConfigSource interface {
 	// Дефолт — 5% capacity, но не меньше domain.BlockSize; без
 	// capacity — 0.
 	MinTail() (int64, error)
+
+	// Source — файл, из которого прочитана конфигурация: путь и время
+	// последней модификации. Пустой путь и нулевое время —
+	// конфигурационного файла нет (работают defaults/env/флаги).
+	// Нужен снапшоту конфигурации в индексе сессии
+	// (config_source/config_mtime, docs/FORMAT.md §5).
+	Source() (path string, mtime time.Time)
 }
 
 // ConfigEditor — изменение конфигурации: запись заданий обратно

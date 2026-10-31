@@ -79,10 +79,11 @@ const (
 // (Capacity/MinTail/Jobs) параллельно с редактированием заданий из
 // HTTP; viper не потокобезопасен.
 type Config struct {
-	mu   sync.Mutex
-	read *viper.Viper
-	file *viper.Viper
-	path string
+	mu    sync.Mutex
+	read  *viper.Viper
+	file  *viper.Viper
+	path  string
+	mtime time.Time // модификация файла конфигурации; ноль — файла нет
 }
 
 // New читает конфигурацию из path (всегда TOML — SPECIFICATION §8 и
@@ -120,7 +121,13 @@ func New(path string, flagOverrides map[string]string) (*Config, error) {
 			read.Set(key, val)
 		}
 	}
-	return &Config{read: read, file: file, path: path}, nil
+	// mtime берётся тем же фактом чтения, что и raw: снапшот в индексе
+	// ссылается на файл, из которого конфигурация реально читалась.
+	var mtime time.Time
+	if info, err := os.Stat(path); err == nil {
+		mtime = info.ModTime()
+	}
+	return &Config{read: read, file: file, path: path, mtime: mtime}, nil
 }
 
 // setDefaults задаёт значения по умолчанию (нижний слой).
@@ -286,6 +293,18 @@ func (c *Config) MinTail() (int64, error) {
 		tail = domain.BlockSize
 	}
 	return tail, nil
+}
+
+// Source — путь и время модификации конфигурационного файла для
+// снапшота в индексе сессии (docs/FORMAT.md §5). Пустые значения —
+// файла нет, конфигурация собрана из defaults/env/флагов.
+func (c *Config) Source() (string, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mtime.IsZero() {
+		return "", time.Time{}
+	}
+	return c.path, c.mtime
 }
 
 // RawTOML — содержимое конфигурационного файла как текст (для

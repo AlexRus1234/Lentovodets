@@ -154,7 +154,7 @@ func (f *spanFarm) serveChanger() *testutil.FuncChanger {
 // в h.cfg (StaticConfig) до вызова.
 func (h *harness) backupSpanUC(ch port.TapeChanger) *backup.UseCase {
 	return backup.New(h.cfg, h.tape, h.codec, h.cat, h.fs, h.hasher,
-		h.rnd, h.clock, nil, testutil.NoopLogger(), ch)
+		h.rnd, h.clock, nil, testutil.NoopLogger(), ch, "")
 }
 
 // restoreChainUC — restore.UseCase со следованием цепочке кассет

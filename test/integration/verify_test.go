@@ -140,7 +140,7 @@ func TestBackupVerify_CorruptedWriteKeepsCatalog(t *testing.T) {
 		needle: verifyV2, writeOn: 1,
 	}
 	uc := backup.New(h.cfg, h.tape, flaky, h.cat, h.fs, h.hasher,
-		h.rnd, h.clock, nil, testutil.NoopLogger(), nil)
+		h.rnd, h.clock, nil, testutil.NoopLogger(), nil, "")
 
 	_, err := uc.Backup(ctx, "daily", backup.Options{Verify: true})
 	var ve *domain.VerifyError

@@ -53,6 +53,7 @@ func (c *fakeConfig) Server() string              { return "srv" }
 func (c *fakeConfig) LogLevel() string            { return "info" }
 func (c *fakeConfig) Capacity() (int64, error)    { return c.capacity, c.capacityErr }
 func (c *fakeConfig) MinTail() (int64, error)     { return c.minTail, c.minTailErr }
+func (c *fakeConfig) Source() (string, time.Time) { return "", time.Time{} }
 
 func jobsAppend() []domain.Job {
 	return []domain.Job{{Name: "daily", Mode: domain.ModeAppend, Paths: []string{"/etc"}}}
@@ -147,7 +148,8 @@ func (h *harness) build(t port.Tape) *backup.UseCase {
 	}
 	return backup.New(cfg, t, h.codec, cat, h.fs,
 		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
-		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger(), h.changer)
+		rnd, testutil.FixedClock(fixedTime), h.prog, testutil.NoopLogger(), h.changer,
+		"test-version")
 }
 
 // progRecorder собирает события прогресса.
@@ -274,8 +276,11 @@ func TestBackup_IncrementAppendsSessionNum(t *testing.T) {
 	if hdr := h.codec.WroteHeaders[0]; hdr.SessionNum != 2 || hdr.Type != domain.SessionInc {
 		t.Errorf("заголовок: %+v", hdr)
 	}
-	if len(h.rec.fsf) != 1 || h.rec.fsf[0] != 3 {
-		t.Errorf("ForwardFilemarks args = %v; want [3] (MTFSF(2K+1), K=1)", h.rec.fsf)
+	// MTFSF(2K+1)=3 — позиция записи; ещё одна пара rewind+MTFSF(3) —
+	// восстановление позиции после попытки дедупа (FakeCodec без
+	// очереди отдаёт EmptyIndexError, пишется полное тело снапшота).
+	if len(h.rec.fsf) != 2 || h.rec.fsf[0] != 3 || h.rec.fsf[1] != 3 {
+		t.Errorf("ForwardFilemarks args = %v; want [3 3] (MTFSF(2K+1) + восстановление после дедуп-чтения)", h.rec.fsf)
 	}
 	if res.Stats.Modified != 1 || res.Stats.Added != 0 || res.Stats.Scanned != 1 {
 		t.Errorf("статистика: %+v; want Modified=1", res.Stats)
@@ -323,8 +328,10 @@ func TestBackup_ForcedFullRestartsNumbering(t *testing.T) {
 	if _, err := h.uc.Backup(ctx, "daily", backup.Options{}); err != nil {
 		t.Fatalf("Backup#3 (INC после FULL-рестарта): %v", err)
 	}
-	if len(h.rec.fsf) != 1 || h.rec.fsf[0] != 3 {
-		t.Errorf("INC после рестарта: ForwardFilemarks args = %v; want [3]", h.rec.fsf)
+	// INC после рестарта: MTFSF(2K+1)=3 на свежий FULL + rewind/fsf(3)
+	// восстановления после дедуп-чтения (см. TestBackup_IncrementAppendsSessionNum)
+	if len(h.rec.fsf) != 2 || h.rec.fsf[0] != 3 || h.rec.fsf[1] != 3 {
+		t.Errorf("INC после рестарта: ForwardFilemarks args = %v; want [3 3]", h.rec.fsf)
 	}
 }
 
@@ -367,7 +374,7 @@ func TestBackup_MirrorTombstoneStats(t *testing.T) {
 		h.tape(), h.codec, h.cat, h.fs,
 		testutil.HashFunc(func(r io.Reader) (string, error) { return "h", nil }),
 		testutil.FixedRand("run-2"), testutil.FixedClock(fixedTime),
-		h.prog, testutil.NoopLogger(), nil)
+		h.prog, testutil.NoopLogger(), nil, "test-version")
 
 	res, err := h.uc.Backup(ctx, "daily", backup.Options{})
 	if err != nil {
@@ -524,8 +531,10 @@ func TestBackup_WriteFailureRestoresEOD(t *testing.T) {
 		t.Fatalf("Backup#2: %v; want boom", err)
 	}
 	// readLabel: rewind; writeSession: rewind + MTFSF(2K+1)=3 (K=1);
-	// восстановление: rewind, MTFSF(3) на старый EOD, пара WriteEOF.
-	want := []string{"rewind", "rewind", "fsf:3", "rewind", "fsf:3", "weof", "weof"}
+	// дедуп-чтение прошлого индекса: rewind + MTFSF(3) восстановления
+	// (FakeCodec отдаёт EmptyIndexError — снапшот пишется полным телом);
+	// восстановление после сбоя: rewind, MTFSF(3) на старый EOD, пара WriteEOF.
+	want := []string{"rewind", "rewind", "fsf:3", "rewind", "fsf:3", "rewind", "fsf:3", "weof", "weof"}
 	if !slices.Equal(h.rec.ops, want) {
 		t.Fatalf("операции ленты = %v; want %v", h.rec.ops, want)
 	}
@@ -643,7 +652,7 @@ func TestBackup_ConfigError(t *testing.T) {
 	h := newHarness(t, map[string]string{"etc/hosts": "x"})
 	boom := errors.New("boom")
 	h.uc = backup.New(&fakeConfig{err: boom}, h.rec, h.codec, h.cat, h.fs,
-		nil, testutil.FixedRand("u"), testutil.FixedClock(fixedTime), nil, testutil.NoopLogger(), nil)
+		nil, testutil.FixedRand("u"), testutil.FixedClock(fixedTime), nil, testutil.NoopLogger(), nil, "test-version")
 	if _, err := h.uc.Backup(context.Background(), "daily", backup.Options{}); !errors.Is(err, boom) {
 		t.Fatalf("Backup: %v; want boom", err)
 	}
