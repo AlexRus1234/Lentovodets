@@ -1,3 +1,6 @@
+> **Это зеркало репозитория. Оригинал находится по адресу:**
+> [https://git.alexrus1234.ru/AlexRus1234/Lentovodets](https://git.alexrus1234.ru/AlexRus1234/Lentovodets)
+
 <!--
 Лентоводец — система резервного копирования на ленточные накопители LTO
 Copyright (C) 2026 AlexRus1234
